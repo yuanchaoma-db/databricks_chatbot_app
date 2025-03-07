@@ -50,11 +50,11 @@ app.layout = html.Div([
                     
                     # Chat input box (initial state)
                     html.Div([
-                        dcc.Input(
+                        dcc.Textarea(
                             id="chat-input",
-                            type="text",
                             placeholder="Ask anything",
-                            className="chat-input"
+                            className="chat-input",
+                            style={"resize": "none"}
                         ),
                         html.Div([
                             html.Button([
@@ -100,11 +100,11 @@ app.layout = html.Div([
             
             # Fixed chat input at bottom (for after initial message is sent)
             html.Div([
-                dcc.Input(
+                dcc.Textarea(
                     id="chat-input-fixed",
-                    type="text",
                     placeholder="Ask anything",
-                    className="chat-input"
+                    className="chat-input",
+                    style={"resize": "none"}
                 ),
                 html.Div([
                     html.Button([
