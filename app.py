@@ -231,36 +231,63 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
                     ])
                 ], className="message-text"),
                 html.Div([
-                    html.Div([
-                        html.Button("Sources", className="sources-button")
-                    ], className="sources-row"),
-                    html.Div([
-                        html.Button(className="copy-button"),
-                        html.Button(className="refresh-button"),
-                        html.Button(className="thumbs-up-button"),
-                        html.Button(className="thumbs-down-button")
-                    ], className="message-actions")
-                ], className="message-footer"),
+                    html.Button("Sources", className="sources-button")
+                ], className="sources-row"),
                 html.Div([
                     html.Div([
-                        html.Div("source name", className="source-name"),
-                        html.Div("Metadata", className="source-metadata")
+                        html.Div([
+                            html.Div([
+                                html.Div(className="source-icon")
+                            ], className="source-icon-container"),
+                            html.Div([
+                                html.Div("source name", className="source-name"),
+                                html.Div("Metadata", className="source-metadata")
+                            ], className="source-content")
+                        ], className="source-item-header")
                     ], className="source-item"),
                     html.Div([
-                        html.Div("source name", className="source-name"),
-                        html.Div("Metadata", className="source-metadata")
+                        html.Div([
+                            html.Div([
+                                html.Div(className="source-icon")
+                            ], className="source-icon-container"),
+                            html.Div([
+                                html.Div("source name", className="source-name"),
+                                html.Div("Metadata", className="source-metadata")
+                            ], className="source-content")
+                        ], className="source-item-header")
                     ], className="source-item"),
                     html.Div([
-                        html.Div("source name", className="source-name"),
-                        html.Div("Metadata", className="source-metadata")
+                        html.Div([
+                            html.Div([
+                                html.Div(className="source-icon")
+                            ], className="source-icon-container"),
+                            html.Div([
+                                html.Div("source name", className="source-name"),
+                                html.Div("Metadata", className="source-metadata")
+                            ], className="source-content")
+                        ], className="source-item-header")
                     ], className="source-item"),
                     html.Div([
-                        html.Div("SQL", className="source-name"),
-                        html.Div("Metadata", className="source-metadata")
+                        html.Div([
+                            html.Div([
+                                html.Div(className="source-icon")
+                            ], className="source-icon-container"),
+                            html.Div([
+                                html.Div("SQL", className="source-name"),
+                                html.Div("Metadata", className="source-metadata")
+                            ], className="source-content")
+                        ], className="source-item-header")
                     ], className="source-item")
-                ], className="sources-list")
-            ], className="message-content")
-        ], className="bot-message message")
+                ], className="sources-list"),
+                
+                html.Div([
+                    html.Button(className="copy-button"),
+                    html.Button(className="refresh-button"),
+                    html.Button(className="thumbs-up-button"),
+                    html.Button(className="thumbs-down-button")
+                ], className="message-actions")
+            ], className="message-footer"),
+        ], className="message-content")
     else:
         bot_response = html.Div([
             html.Div("Thinking...", className="thinking-indicator"),
