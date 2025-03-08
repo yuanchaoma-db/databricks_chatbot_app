@@ -1,5 +1,5 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback, ALL, callback_context
+from dash import html, dcc, Input, Output, State, callback, ALL, callback_context, no_update
 import dash_bootstrap_components as dbc
 import json
 from databricks.sdk import WorkspaceClient
@@ -122,12 +122,6 @@ app.layout = html.Div([
                 # Chat messages will be added here
                 html.Div(id="chat-messages", className="chat-messages"),
                 
-                # Add a loading component
-                dcc.Loading(
-                    id="loading-message",
-                    type="circle",
-                    children=html.Div(id="loading-output")
-                )
             ], className="chat-content"),
             
             # Fixed chat input at bottom (for after initial message is sent)
@@ -159,20 +153,24 @@ app.layout = html.Div([
             ], id="fixed-input-wrapper", className="fixed-input-wrapper", style={"display": "none"})
         ], className="chat-container"),
         
-    ], id="main-content", className="main-content")
+    ], id="main-content", className="main-content"),
+    
+    # Add dcc.Store components to manage state
+    dcc.Store(id="chat-trigger", data={"trigger": False, "message": ""}),
+    dcc.Store(id="chat-history-store", data=[])
 ])
 
 # Store chat history
 chat_history = []
 
-# Replace the long_callback with a standard callback
+# First callback: Add user message and thinking indicator
 @app.callback(
     [Output("chat-messages", "children"),
      Output("welcome-container", "style"),
      Output("fixed-input-wrapper", "style"),
      Output("chat-input", "value"),
      Output("chat-input-fixed", "value"),
-     Output("loading-output", "children")],
+     Output("chat-trigger", "data")],
     [Input("send-button", "n_clicks"),
      Input("send-button-fixed", "n_clicks")],
     [State("chat-input", "value"),
@@ -180,12 +178,12 @@ chat_history = []
      State("chat-messages", "children")],
     prevent_initial_call=True
 )
-def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
+def add_user_message_and_indicator(n_clicks1, n_clicks2, input1, input2, current_messages):
     # Determine which input triggered the callback
     ctx = callback_context
     if not ctx.triggered:
         # Initial load, don't do anything
-        return current_messages, {"display": "block"}, {"display": "none"}, "", "", ""
+        return current_messages, {"display": "block"}, {"display": "none"}, "", "", {"trigger": False, "message": ""}
     
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
     
@@ -195,7 +193,7 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
     if not user_input:
         # Empty input, don't do anything
         return current_messages, {"display": "block" if not current_messages else "none"},\
-              {"display": "none" if not current_messages else "flex"}, "", "", ""
+              {"display": "none" if not current_messages else "flex"}, "", "", {"trigger": False, "message": ""}
     
     # Create user message
     user_message = html.Div([
@@ -208,7 +206,37 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
     else:
         updated_messages = [user_message]
     
-    # Send message to Databricks AI service and get response
+    # Add thinking indicator
+    thinking_indicator = html.Div([
+        html.Div([
+            html.Span(className="spinner"),
+            html.Span("Thinking...")
+        ], className="thinking-indicator")
+    ], className="bot-message message")
+    
+    # Add the thinking indicator to the messages
+    updated_messages.append(thinking_indicator)
+    
+    # Set the trigger for the next callback
+    trigger_data = {"trigger": True, "message": user_input}
+    
+    # Hide welcome container, show fixed input
+    return updated_messages, {"display": "none"}, {"display": "flex"}, "", "", trigger_data
+
+# Second callback: Call model API and update with response
+@app.callback(
+    Output("chat-messages", "children", allow_duplicate=True),
+    [Input("chat-trigger", "data")],
+    [State("chat-messages", "children")],
+    prevent_initial_call=True
+)
+def get_model_response(trigger_data, current_messages):
+    if not trigger_data["trigger"]:
+        # No trigger, don't do anything
+        return dash.no_update
+    
+    user_input = trigger_data["message"]
+    
     try:
         # Make the API call
         response = client.serving_endpoints.query(
@@ -244,8 +272,8 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
             ], className="message-content")
         ], className="bot-message message")
         
-        # Add the bot response to the messages
-        updated_messages.append(bot_response)
+        # Replace the thinking indicator with the actual response
+        updated_messages = current_messages[:-1] + [bot_response]
         
     except Exception as e:
         # Handle errors in AI service communication
@@ -264,11 +292,11 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
             ], className="message-content")
         ], className="bot-message message")
         
-        # Add the error response to the messages
-        updated_messages.append(error_response)
+        # Replace the thinking indicator with the error response
+        updated_messages = current_messages[:-1] + [error_response]
     
-    # Hide welcome container, show fixed input
-    return updated_messages, {"display": "none"}, {"display": "flex"}, "", "", ""
+    # Return just the updated_messages, not wrapped in another list
+    return updated_messages
 
 # Toggle sidebar and speech button
 @app.callback(
