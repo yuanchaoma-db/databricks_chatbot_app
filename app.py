@@ -37,7 +37,7 @@ app.layout = html.Div([
                     html.Div("Project Brainstorming", className="chat-item", id={"type": "chat-item", "index": 1}),
                     html.Div("Work discussions", className="chat-item", id={"type": "chat-item", "index": 2}),
                     html.Div("Shared with me discussions", className="chat-item", id={"type": "chat-item", "index": 3}),
-                    html.Div("Visual languages for data apps", className="chat-item", id={"type": "chat-item", "index": 4})
+                    html.Div("Visual languages for data apps Visual languages for data apps Visual languages for data apps Visual languages for data apps", className="chat-item", id={"type": "chat-item", "index": 4})
                 ], className="chat-list", id="chat-list")
             ], id="sidebar", className="sidebar")
         ], id="left-component", className="left-component"),
@@ -72,17 +72,18 @@ app.layout = html.Div([
                             style={"resize": "none"}
                         ),
                         html.Div([
-                            html.Button([
-                                html.Img(src="assets/at_icon.svg", className="at-icon")
-                            ], className="input-button"),
-                            html.Button([
-                                html.Img(src="assets/clip_icon.svg", className="clip-icon")
-                            ], className="input-button")
+                            html.Button(
+                                className="input-button at-button"
+                            ),
+                            html.Button(
+                                className="input-button clip-button"
+                            )
                         ], className="input-buttons-left"),
                         html.Div([
-                            html.Button([
-                                html.Img(src="assets/send_icon.svg", className="send-icon")
-                            ], id="send-button", className="input-button")
+                            html.Button(
+                                id="send-button", 
+                                className="input-button send-button"
+                            )
                         ], className="input-buttons-right")
                     ], className="chat-input-container"),
                     
@@ -123,17 +124,18 @@ app.layout = html.Div([
                         style={"resize": "none"}
                     ),
                     html.Div([
-                        html.Button([
-                            html.Img(src="assets/at_icon.svg", className="at-icon")
-                        ], className="input-button"),
-                        html.Button([
-                            html.Img(src="assets/clip_icon.svg", className="clip-icon")
-                        ], className="input-button")
+                        html.Button(
+                            className="input-button at-button"
+                        ),
+                        html.Button(
+                            className="input-button clip-button"
+                        )
                     ], className="input-buttons-left"),
                     html.Div([
-                        html.Button([
-                            html.Img(src="assets/send_icon.svg", className="send-icon")
-                        ], id="send-button-fixed", className="input-button")
+                        html.Button(
+                            id="send-button-fixed", 
+                            className="input-button send-button"
+                        )
                     ], className="input-buttons-right")
                 ], id="fixed-input-container", className="fixed-input-container"),
                 
@@ -191,7 +193,9 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
                 html.Div("Currently, the weather in Paris is clear with a temperature of 36°F, feeling like 30°F due to the wind. The forecast indicates it will reach a high of 42°F and a low of 35°F. The wind is coming from the northeast at 7 mph, and the humidity stands at 87%.", 
                          className="message-text"),
                 html.Div([
-                    html.Button("Sources", className="sources-button"),
+                    html.Div([
+                        html.Button("Sources", className="sources-button")
+                    ], className="sources-row"),
                     html.Div([
                         html.Button(className="copy-button"),
                         html.Button(className="refresh-button"),
@@ -227,7 +231,9 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
                     ])
                 ], className="message-text"),
                 html.Div([
-                    html.Button("Sources", className="sources-button"),
+                    html.Div([
+                        html.Button("Sources", className="sources-button")
+                    ], className="sources-row"),
                     html.Div([
                         html.Button(className="copy-button"),
                         html.Button(className="refresh-button"),
@@ -262,7 +268,9 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
                 html.Div(f"I understand you're asking about: '{user_input}'. How can I help you with that?", 
                          className="message-text"),
                 html.Div([
-                    html.Button("Sources", className="sources-button"),
+                    html.Div([
+                        html.Button("Sources", className="sources-button")
+                    ], className="sources-row"),
                     html.Div([
                         html.Button(className="copy-button"),
                         html.Button(className="refresh-button"),
