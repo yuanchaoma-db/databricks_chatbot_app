@@ -261,7 +261,7 @@ body {
 /* Welcome container */
 .welcome-container {
     max-width: 800px;
-    margin-top: 200px;
+    margin-top: 100px;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -416,12 +416,13 @@ body {
     align-items: center;
     width: 100%;
     max-width: 650px;
-    margin: 0 auto;
+    margin: 2px auto;
     position: sticky;
-    bottom: 16px;
+    bottom: 0;
     background-color: white;
     z-index: 10;
     padding-top: 8px;
+    box-shadow: 0 -10px 20px rgba(255, 255, 255, 0.9); /* Add shadow gradient to blend with content */
 }
 
 /* Fixed input container */
@@ -456,6 +457,7 @@ body {
     display: flex;
     flex-direction: column;
     width: 100%;
+
 }
 
 .message {
@@ -475,6 +477,7 @@ body {
     align-items: flex-start;
     align-self: flex-start;
     text-align: left;
+    margin-top: 16px;
 }
 
 .message-text {
@@ -516,7 +519,7 @@ body {
     opacity: 1;
 }
 
-.thinking-indicator::before {
+/* .thinking-indicator::before {
     content: "";
     display: inline-block;
     width: 16px;
@@ -527,12 +530,12 @@ body {
     border-radius: 50%;
     animation: spin 1s linear infinite;
     margin-right: 8px;
-}
+} */
 
-@keyframes spin {
+/* @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
-}
+} */
 
 .bot-message .thinking-indicator {
     margin-left: 0;
@@ -766,12 +769,12 @@ body {
     }
 }
 
-/* Animations */
+/* Animations
 @keyframes thinking {
     0% { opacity: 1; }
     50% { opacity: 1; }
     100% { opacity: 1; }
-}
+} */
 
 .thinking-indicator {
     animation: none;
@@ -840,5 +843,74 @@ html {
     background-size: 16px;
     background-repeat: no-repeat;
     background-position: center;
+}
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(95, 114, 129, 0.2);
+    border-top: 2px solid #5F7281;
+    border-right: 2px solid #5F7281;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Custom loading container */
+/* .loading-container {
+  display: flex;
+  justify-content: flex-start;
+  margin: 10px 0;
+  padding: 8px 16px;
+  background-color: #f5f5f5;
+  border-radius: 8px;
+  width: fit-content;
+} */
+
+/* Target the dash loading spinner */
+/* .dash-spinner {
+  margin-right: 8px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-left-color: #767676;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}    */
+
+/* Style the text that appears with the loading spinner */
+/* .loading-text {
+  font-size: 14px;
+  color: #555;
+} */
+
+/* Model info styling */
+.model-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 4px 0;
+}
+
+.model-icon {
+  width: 20px;
+  height: 20px;
+  background-image: url("buttonIcon.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.model-name {
+  font-size: 14px;
+  color: #11171C;
+  font-weight: 600;
 }
 

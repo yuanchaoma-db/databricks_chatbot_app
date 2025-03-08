@@ -1,10 +1,19 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback, ALL
+from dash import html, dcc, Input, Output, State, callback, ALL, callback_context
 import dash_bootstrap_components as dbc
 import json
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
-# Initialize the Dash app
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(
+    __name__, 
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+)
+
+SERVING_ENDPOINT_NAME = "databricks-meta-llama-3-3-70b-instruct"  # Replace with your actual endpoint name
+
+# Initialize Databricks workspace client
+client = WorkspaceClient()
 
 # Define the layout
 app.layout = html.Div([
@@ -111,7 +120,14 @@ app.layout = html.Div([
                 ], id="welcome-container", className="welcome-container"),
                 
                 # Chat messages will be added here
-                html.Div(id="chat-messages", className="chat-messages")
+                html.Div(id="chat-messages", className="chat-messages"),
+                
+                # Add a loading component
+                dcc.Loading(
+                    id="loading-message",
+                    type="circle",
+                    children=html.Div(id="loading-output")
+                )
             ], className="chat-content"),
             
             # Fixed chat input at bottom (for after initial message is sent)
@@ -139,9 +155,8 @@ app.layout = html.Div([
                     ], className="input-buttons-right")
                 ], id="fixed-input-container", className="fixed-input-container"),
                 
-                # Disclaimer moved outside the input container
                 html.Div("Chatbot may make mistakes. Check important info.", className="disclaimer-fixed")
-            ], className="fixed-input-wrapper")
+            ], id="fixed-input-wrapper", className="fixed-input-wrapper", style={"display": "none"})
         ], className="chat-container"),
         
     ], id="main-content", className="main-content")
@@ -150,25 +165,27 @@ app.layout = html.Div([
 # Store chat history
 chat_history = []
 
-# Callback for sending messages
+# Replace the long_callback with a standard callback
 @app.callback(
     [Output("chat-messages", "children"),
      Output("welcome-container", "style"),
-     Output("fixed-input-container", "style"),
+     Output("fixed-input-wrapper", "style"),
      Output("chat-input", "value"),
-     Output("chat-input-fixed", "value")],
+     Output("chat-input-fixed", "value"),
+     Output("loading-output", "children")],
     [Input("send-button", "n_clicks"),
      Input("send-button-fixed", "n_clicks")],
     [State("chat-input", "value"),
      State("chat-input-fixed", "value"),
-     State("chat-messages", "children")]
+     State("chat-messages", "children")],
+    prevent_initial_call=True
 )
 def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
     # Determine which input triggered the callback
-    ctx = dash.callback_context
+    ctx = callback_context
     if not ctx.triggered:
         # Initial load, don't do anything
-        return current_messages, {"display": "block"}, {"display": "none"}, "", ""
+        return current_messages, {"display": "block"}, {"display": "none"}, "", "", ""
     
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
     
@@ -178,144 +195,80 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
     if not user_input:
         # Empty input, don't do anything
         return current_messages, {"display": "block" if not current_messages else "none"},\
-              {"display": "none" if not current_messages else "flex"}, "", ""
+              {"display": "none" if not current_messages else "flex"}, "", "", ""
     
     # Create user message
     user_message = html.Div([
         html.Div(user_input, className="message-text")
     ], className="user-message message")
     
-    # Create bot response (this would be where you'd integrate with an actual AI)
-    if "weather" in user_input.lower() and "paris" in user_input.lower():
-        bot_response = html.Div([
-            html.Div("Thinking...", className="thinking-indicator"),
-            html.Div([
-                html.Div("Currently, the weather in Paris is clear with a temperature of 36°F, feeling like 30°F due to the wind. The forecast indicates it will reach a high of 42°F and a low of 35°F. The wind is coming from the northeast at 7 mph, and the humidity stands at 87%.", 
-                         className="message-text"),
-                html.Div([
-                    html.Div([
-                        html.Button("Sources", className="sources-button")
-                    ], className="sources-row"),
-                    html.Div([
-                        html.Button(className="copy-button"),
-                        html.Button(className="refresh-button"),
-                        html.Button(className="thumbs-up-button"),
-                        html.Button(className="thumbs-down-button")
-                    ], className="message-actions")
-                ], className="message-footer")
-            ], className="message-content")
-        ], className="bot-message message")
-    elif "kid" in user_input.lower() and "activit" in user_input.lower():
-        bot_response = html.Div([
-            html.Div("Thinking...", className="thinking-indicator"),
-            html.Div([
-                html.Div([
-                    html.P("Here are a variety of fun and educational activities you can enjoy with kids of all ages."),
-                    html.Ol([
-                        html.Li([
-                            html.Strong("Crafting: "),
-                            "Kids can engage in making scratch art, bookmarks, or even transform old crayons into new art pieces. Crafting activities like making a bird feeder or superhero costumes are also popular."
-                        ]),
-                        html.Li([
-                            html.Strong("Educational Games: "),
-                            "Try learning-oriented games like building a cardboard castle or conducting simple science experiments like making a bouncy egg or exploring how germs spread."
-                        ]),
-                        html.Li([
-                            html.Strong("Creative Play: "),
-                            "Set up activities like indoor hopscotch or a mini obstacle course. You can also organize a treasure hunt or put on a puppet show to spark creativity."
-                        ]),
-                        html.Li([
-                            html.Strong("Cooking and Baking: "),
-                            "Involve kids in making simple recipes like ice cream in a bag or baking muffins, which are not only fun but also skill-building."
-                        ])
-                    ])
-                ], className="message-text"),
-                html.Div([
-                    html.Button("Sources", className="sources-button")
-                ], className="sources-row"),
-                html.Div([
-                    html.Div([
-                        html.Div([
-                            html.Div([
-                                html.Div(className="source-icon")
-                            ], className="source-icon-container"),
-                            html.Div([
-                                html.Div("source name", className="source-name"),
-                                html.Div("Metadata", className="source-metadata")
-                            ], className="source-content")
-                        ], className="source-item-header")
-                    ], className="source-item"),
-                    html.Div([
-                        html.Div([
-                            html.Div([
-                                html.Div(className="source-icon")
-                            ], className="source-icon-container"),
-                            html.Div([
-                                html.Div("source name", className="source-name"),
-                                html.Div("Metadata", className="source-metadata")
-                            ], className="source-content")
-                        ], className="source-item-header")
-                    ], className="source-item"),
-                    html.Div([
-                        html.Div([
-                            html.Div([
-                                html.Div(className="source-icon")
-                            ], className="source-icon-container"),
-                            html.Div([
-                                html.Div("source name", className="source-name"),
-                                html.Div("Metadata", className="source-metadata")
-                            ], className="source-content")
-                        ], className="source-item-header")
-                    ], className="source-item"),
-                    html.Div([
-                        html.Div([
-                            html.Div([
-                                html.Div(className="source-icon")
-                            ], className="source-icon-container"),
-                            html.Div([
-                                html.Div("SQL", className="source-name"),
-                                html.Div("Metadata", className="source-metadata")
-                            ], className="source-content")
-                        ], className="source-item-header")
-                    ], className="source-item")
-                ], className="sources-list"),
-                
-                html.Div([
-                    html.Button(className="copy-button"),
-                    html.Button(className="refresh-button"),
-                    html.Button(className="thumbs-up-button"),
-                    html.Button(className="thumbs-down-button")
-                ], className="message-actions")
-            ], className="message-footer"),
-        ], className="message-content")
-    else:
-        bot_response = html.Div([
-            html.Div("Thinking...", className="thinking-indicator"),
-            html.Div([
-                html.Div(f"I understand you're asking about: '{user_input}'. How can I help you with that?", 
-                         className="message-text"),
-                html.Div([
-                    html.Div([
-                        html.Button("Sources", className="sources-button")
-                    ], className="sources-row"),
-                    html.Div([
-                        html.Button(className="copy-button"),
-                        html.Button(className="refresh-button"),
-                        html.Button(className="thumbs-up-button"),
-                        html.Button(className="thumbs-down-button")
-                    ], className="message-actions")
-                ], className="message-footer")
-            ], className="message-content")
-        ], className="bot-message message")
-    
-    # Update chat history
+    # Add the user message to the chat
     if current_messages:
-        updated_messages = current_messages + [user_message, bot_response]
+        updated_messages = current_messages + [user_message]
     else:
-        updated_messages = [user_message, bot_response]
+        updated_messages = [user_message]
+    
+    # Send message to Databricks AI service and get response
+    try:
+        # Make the API call
+        response = client.serving_endpoints.query(
+            SERVING_ENDPOINT_NAME,
+            temperature=0.7,
+            messages=[ChatMessage(content=user_input, role=ChatMessageRole.USER)],
+        )
+        
+        bot_response_text = response.choices[0].message.content
+        
+        formatted_response = bot_response_text
+        
+        bot_response = html.Div([
+            # Add model name at the top of the message
+            html.Div([
+                html.Div(className="model-icon"),
+                html.Span(SERVING_ENDPOINT_NAME, className="model-name")
+            ], className="model-info"),
+            
+            html.Div([
+                dcc.Markdown(formatted_response, className="message-text"),
+                html.Div([
+                    html.Div([
+                        html.Button("Sources", className="sources-button")
+                    ], className="sources-row"),
+                    html.Div([
+                        html.Button(className="copy-button"),
+                        html.Button(className="refresh-button"),
+                        html.Button(className="thumbs-up-button"),
+                        html.Button(className="thumbs-down-button")
+                    ], className="message-actions")
+                ], className="message-footer")
+            ], className="message-content")
+        ], className="bot-message message")
+        
+        # Add the bot response to the messages
+        updated_messages.append(bot_response)
+        
+    except Exception as e:
+        # Handle errors in AI service communication
+        error_response = html.Div([
+            html.Div([
+                html.Div(f"Sorry, I encountered an error: {str(e)}", 
+                         className="message-text"),
+                html.Div([
+                    html.Div([
+                        html.Button(className="copy-button"),
+                        html.Button(className="refresh-button"),
+                        html.Button(className="thumbs-up-button"),
+                        html.Button(className="thumbs-down-button")
+                    ], className="message-actions")
+                ], className="message-footer")
+            ], className="message-content")
+        ], className="bot-message message")
+        
+        # Add the error response to the messages
+        updated_messages.append(error_response)
     
     # Hide welcome container, show fixed input
-    return updated_messages, {"display": "none"}, {"display": "flex"}, "", ""
+    return updated_messages, {"display": "none"}, {"display": "flex"}, "", "", ""
 
 # Toggle sidebar and speech button
 @app.callback(
