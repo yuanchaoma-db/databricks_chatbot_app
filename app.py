@@ -1,6 +1,7 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State, callback, ALL
 import dash_bootstrap_components as dbc
+import json
 
 # Initialize the Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
@@ -9,37 +10,51 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.layout = html.Div([
     # Top navigation bar
     html.Div([
+        # Left component containing both nav-left and sidebar
         html.Div([
-            html.Button([
-                html.Img(src="assets/menu_icon.svg", className="menu-icon")
-            ], id="sidebar-toggle", className="nav-button"),
-            html.Button([
-                html.Img(src="assets/speech_icon.svg", className="speech-icon")
-            ], className="nav-button"),
+            # Nav left
+            html.Div([
+                html.Button([
+                    html.Img(src="assets/menu_icon.svg", className="menu-icon")
+                ], id="sidebar-toggle", className="nav-button"),
+                # Speech icon in top nav (visible when sidebar is closed)
+                html.Button([
+                    html.Img(src="assets/speech_icon.svg", className="speech-icon")
+                ], id="speech-button", className="nav-button"),
+                html.Button([
+                    html.Img(src="assets/speech_icon.svg", className="speech-icon"),
+                    html.Div("New chat", className="new-chat-text")
+                ], id="sidebar-new-chat-button", className="new-chat-button", style={"display": "none"})
+            ], id="nav-left", className="nav-left"),
+            
+            # Sidebar (now inside the left component)
+            html.Div([
+                html.Div([
+                    html.Div("Recent chats", className="sidebar-header-text"),
+                ], className="sidebar-header"),
+                html.Div([
+                    html.Div("Kids activities", className="chat-item active", id={"type": "chat-item", "index": 0}),
+                    html.Div("Project Brainstorming", className="chat-item", id={"type": "chat-item", "index": 1}),
+                    html.Div("Work discussions", className="chat-item", id={"type": "chat-item", "index": 2}),
+                    html.Div("Shared with me discussions", className="chat-item", id={"type": "chat-item", "index": 3}),
+                    html.Div("Visual languages for data apps", className="chat-item", id={"type": "chat-item", "index": 4})
+                ], className="chat-list", id="chat-list")
+            ], id="sidebar", className="sidebar")
+        ], id="left-component", className="left-component"),
+        
+        html.Div([
             html.Div([
                 html.Img(src="assets/databricks_icon.svg", className="databricks-logo"),
                 html.Img(src="assets/databricks_text.svg", className="databricks-text"),
-            ], className="logo-container")
-        ], className="nav-left"),
+            ], id="logo-container", className="logo-container")
+        ], className="nav-center"),
         html.Div([
-                html.Div("S", className="user-avatar")
+            html.Div("S", className="user-avatar")
         ], className="nav-right")
     ], className="top-nav"),
     
-    # Main content area with sidebar and chat
+    # Main content area with chat
     html.Div([
-        # Sidebar (hidden by default on mobile)
-        html.Div([
-            html.Div("Recent chats", className="sidebar-header"),
-            html.Div([
-                html.Div("Kids activities", className="chat-item active"),
-                html.Div("Project Brainstorming", className="chat-item"),
-                html.Div("Work discussions", className="chat-item"),
-                html.Div("Shared with me discussions", className="chat-item"),
-                html.Div("Visual languages for data apps", className="chat-item")
-            ], className="chat-list")
-        ], id="sidebar", className="sidebar"),
-        
         # Main chat area
         html.Div([
             # Chat content
@@ -100,28 +115,34 @@ app.layout = html.Div([
             
             # Fixed chat input at bottom (for after initial message is sent)
             html.Div([
-                dcc.Textarea(
-                    id="chat-input-fixed",
-                    placeholder="Ask anything",
-                    className="chat-input",
-                    style={"resize": "none"}
-                ),
                 html.Div([
-                    html.Button([
-                        html.Div(className="at-icon")
-                    ], className="input-button"),
-                    html.Button([
-                        html.Div(className="clip-icon")
-                    ], className="input-button")
-                ], className="input-buttons-left"),
-                html.Div([
-                    html.Button([
-                        html.Div(className="send-icon")
-                    ], id="send-button-fixed", className="input-button")
-                ], className="input-buttons-right")
-            ], id="fixed-input-container", className="fixed-input-container")
-        ], className="chat-container")
-    ], className="main-content")
+                    dcc.Textarea(
+                        id="chat-input-fixed",
+                        placeholder="Ask anything",
+                        className="chat-input",
+                        style={"resize": "none"}
+                    ),
+                    html.Div([
+                        html.Button([
+                            html.Img(src="assets/at_icon.svg", className="at-icon")
+                        ], className="input-button"),
+                        html.Button([
+                            html.Img(src="assets/clip_icon.svg", className="clip-icon")
+                        ], className="input-button")
+                    ], className="input-buttons-left"),
+                    html.Div([
+                        html.Button([
+                            html.Img(src="assets/send_icon.svg", className="send-icon")
+                        ], id="send-button-fixed", className="input-button")
+                    ], className="input-buttons-right")
+                ], id="fixed-input-container", className="fixed-input-container"),
+                
+                # Disclaimer moved outside the input container
+                html.Div("Chatbot may make mistakes. Check important info.", className="disclaimer-fixed")
+            ], className="fixed-input-wrapper")
+        ], className="chat-container"),
+        
+    ], id="main-content", className="main-content")
 ])
 
 # Store chat history
@@ -261,19 +282,55 @@ def send_message(n_clicks1, n_clicks2, input1, input2, current_messages):
     # Hide welcome container, show fixed input
     return updated_messages, {"display": "none"}, {"display": "flex"}, "", ""
 
-# Toggle sidebar
+# Toggle sidebar and speech button
 @app.callback(
-    Output("sidebar", "className"),
-    Input("sidebar-toggle", "n_clicks"),
-    State("sidebar", "className")
+    [Output("sidebar", "className"),
+     Output("speech-button", "style"),
+     Output("sidebar-new-chat-button", "style"),
+     Output("logo-container", "className"),
+     Output("nav-left", "className"),
+     Output("left-component", "className"),
+     Output("main-content", "className")],
+    [Input("sidebar-toggle", "n_clicks")],
+    [State("sidebar", "className"),
+     State("left-component", "className"),
+     State("main-content", "className")]
 )
-def toggle_sidebar(n_clicks, current_class):
+def toggle_sidebar(n_clicks, current_sidebar_class, current_left_component_class, current_main_content_class):
     if n_clicks:
-        if "sidebar-open" in current_class:
-            return "sidebar"
+        if "sidebar-open" in current_sidebar_class:
+            # Sidebar is closing
+            return "sidebar", {"display": "flex"}, {"display": "none"}, "logo-container", "nav-left", "left-component", "main-content"
         else:
-            return "sidebar sidebar-open"
-    return current_class
+            # Sidebar is opening
+            return "sidebar sidebar-open", {"display": "none"}, {"display": "flex"}, "logo-container logo-container-open", "nav-left nav-left-open", "left-component left-component-open", "main-content main-content-shifted"
+    # Initial state
+    return current_sidebar_class, {"display": "flex"}, {"display": "none"}, "logo-container", "nav-left", "left-component", current_main_content_class
+
+# Add callback for chat item selection
+@app.callback(
+    Output("chat-list", "children"),
+    [Input({"type": "chat-item", "index": ALL}, "n_clicks")],
+    [State("chat-list", "children")]
+)
+def update_active_chat(n_clicks, current_items):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return current_items
+    
+    # Get the clicked item index
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    clicked_index = json.loads(triggered_id)["index"]
+    
+    # Update the active class
+    updated_items = []
+    for i, item in enumerate(current_items):
+        if i == clicked_index:
+            updated_items.append(html.Div(item["props"]["children"], className="chat-item active", id={"type": "chat-item", "index": i}))
+        else:
+            updated_items.append(html.Div(item["props"]["children"], className="chat-item", id={"type": "chat-item", "index": i}))
+    
+    return updated_items
 
 # Run the app
 if __name__ == "__main__":
