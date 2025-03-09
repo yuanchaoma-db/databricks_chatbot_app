@@ -14,7 +14,6 @@ const TopNavContainer = styled.div`
   justify-content: space-between;
   height: 48px;
   padding: 0 16px;
-  background-color: #FFFFFF;
   width: 100%;
 `;
 

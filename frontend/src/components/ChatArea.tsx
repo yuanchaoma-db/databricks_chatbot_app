@@ -18,7 +18,7 @@ const ChatContainer = styled.div<ChatContainerProps>`
   flex: 1;
   height: 100vh;
   margin-left: ${props => props.sidebarOpen ? '300px' : '100px'};
-  width: ${props => props.sidebarOpen ? 'calc(100% - 300px)' : 'calc(100% - 80px)'};
+  width: ${props => props.sidebarOpen ? 'calc(100% - 300px)' : 'calc(100% - 100px)'};
   transition: margin-left 0.3s ease, width 0.3s ease;
   overflow: hidden;
 `;
@@ -38,7 +38,7 @@ const WelcomeContainer = styled.div<{ visible: boolean }>`
   align-items: center;
   justify-content: center;
   height: 100%;
-  max-width: 650px;
+  max-width: 660px;
   margin: 0 auto;
   padding: 24px 16px;
 `;
@@ -53,9 +53,9 @@ const WelcomeMessage = styled.h1`
 
 const SuggestionButtons = styled.div`
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
-  gap: 12px;
+  gap: 8px;
   margin-top: 24px;
   width: 100%;
 `;
@@ -63,18 +63,19 @@ const SuggestionButtons = styled.div`
 const SuggestionButton = styled.button`
   display: flex;
   align-items: center;
+  text-wrap-mode: nowrap;
   gap: 8px;
-  padding: 12px 16px;
+  padding: 8px 8px;
   background-color: #FFFFFF;
   border: 1px solid #C0CDD8;
   border-radius: 8px;
   color: #11171C;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.05);
   
   &:hover {
-    background-color: #F5F5F5;
+    background-color:rgb(252, 240, 252);
   }
 `;
 
@@ -98,13 +99,12 @@ const FixedInputWrapper = styled.div<{ visible: boolean }>`
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 650px;
+  max-width: 660px;
   margin: 2px auto;
   position: sticky;
-  bottom: 0;
+  bottom: 20px;
   background-color: white;
   z-index: 10;
-  padding-top: 8px;
   box-shadow: 0 -10px 20px rgba(255, 255, 255, 0.9);
 `;
 
@@ -119,11 +119,13 @@ const DisclaimerFixed = styled.div`
 const MessagesContainer = styled.div`
   display: flex;
   flex-direction: column;
-  width: 100%;
+  width: 680px;
+  margin: 0 auto;
+  max-width: 100%;
 `;
 
 const ThinkingIndicator = styled.div`
-  font-size: 14px;
+  font-size: 13px;
   color: #5F7281;
   margin-bottom: 8px;
   align-self: flex-start;
@@ -137,7 +139,7 @@ const Spinner = styled.div`
   display: inline-block;
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(95, 114, 129, 0.2);
+  border: 2px solid transparent;
   border-top: 2px solid #5F7281;
   border-right: 2px solid #5F7281;
   border-radius: 50%;
@@ -169,20 +171,20 @@ const ChatArea: React.FC = () => {
   return (
     <ChatContainer data-testid="chat-area" sidebarOpen={isSidebarOpen}>
       <ChatTopNav />
-      <ChatContent>
+      <ChatContent data-testid="chat-content">
         <WelcomeContainer visible={!hasMessages} data-testid="welcome-container">
-          <WelcomeMessage>What can I help with?</WelcomeMessage>
-          <ChatInput />
-          <SuggestionButtons>
-            <SuggestionButton onClick={() => handleSuggestionClick("Find tables to query")}>
+          <WelcomeMessage data-testid="welcome-message">What can I help with?</WelcomeMessage>
+          <ChatInput data-testid="chat-input" />
+          <SuggestionButtons data-testid="suggestion-buttons">
+            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Find tables to query")}>
               <SuggestionIcon />
               <span>Find tables to query</span>
             </SuggestionButton>
-            <SuggestionButton onClick={() => handleSuggestionClick("Debug my notebook")}>
+            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Debug my notebook")}>
               <SuggestionIcon />
               <span>Debug my notebook</span>
             </SuggestionButton>
-            <SuggestionButton onClick={() => handleSuggestionClick("Fix my code")}>
+            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Fix my code")}>
               <SuggestionIcon />
               <span>Fix my code</span>
             </SuggestionButton>
@@ -197,7 +199,7 @@ const ChatArea: React.FC = () => {
         {hasMessages && (
           <MessagesContainer data-testid="messages-container">
             {messages.map((message, index) => (
-              <ChatMessage key={index} message={message} />
+              <ChatMessage key={index} message={message} data-testid={`message-${index}`}/>
             ))}
             {loading && (
               <ThinkingIndicator>
@@ -210,7 +212,7 @@ const ChatArea: React.FC = () => {
         )}
       </ChatContent>
       
-      <FixedInputWrapper visible={hasMessages}>
+      <FixedInputWrapper visible={hasMessages} data-testid="fixed-input-wrapper">
         <ChatInput fixed={true} />
         <DisclaimerFixed>Chatbot may make mistakes. Check important info.</DisclaimerFixed>
       </FixedInputWrapper>

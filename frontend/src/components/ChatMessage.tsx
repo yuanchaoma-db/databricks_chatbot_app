@@ -6,6 +6,7 @@ import refreshIconUrl from '../assets/images/sync_icon.svg';
 import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
 import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
 import sourceIconUrl from '../assets/images/source_icon.svg';
+import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import { Message } from '../types';
 
 const MessageContainer = styled.div<{ isUser: boolean }>`
@@ -14,17 +15,17 @@ const MessageContainer = styled.div<{ isUser: boolean }>`
   width: 100%;
   align-items: ${props => props.isUser ? 'flex-end' : 'flex-start'};
   align-self: ${props => props.isUser ? 'flex-end' : 'flex-start'};
-  text-align: ${props => props.isUser ? 'right' : 'left'};
   margin-top: ${props => props.isUser ? '8px' : '16px'};
   max-width: ${props => props.isUser ? '80%' : '100%'};
+  margin-bottom: 10px;
 `;
 
 const UserMessageContent = styled.div`
   background-color: #F5F5F5;
   color: #11171C;
-  padding: 12px 16px;
+  padding: 8px 16px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -32,33 +33,35 @@ const UserMessageContent = styled.div`
 `;
 
 const BotMessageContent = styled.div`
-  background-color: #FFFFFF;
   border-radius: 12px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 6px;
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: normal;
   text-align: left;
+  font-size: 13px;
+  margin: 2px 0;
 `;
 
 const ModelInfo = styled.div`
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
   padding: 4px 0;
 `;
 
 const ModelIcon = styled.div`
   width: 20px;
   height: 20px;
-  background-color: #f0f0f0;
-  border-radius: 50%;
+  background-image: url(${buttonIconUrl});
+  background-size: 16px;
+  background-repeat: no-repeat;
+  background-position: center;
 `;
 
 const ModelName = styled.span`
-  font-size: 14px;
+  font-size: 13px;
   color: #11171C;
   font-weight: 600;
 `;
@@ -73,8 +76,9 @@ const MessageFooter = styled.div`
 
 const MessageActions = styled.div`
   display: flex;
-  gap: 16px;
+  gap: 8px;
   margin-top: 4px;
+  margin-bottom: 24px;
 `;
 
 const ActionButton = styled.button`
@@ -159,26 +163,26 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   
   if (isUser) {
     return (
-      <MessageContainer isUser={true}>
-        <UserMessageContent>{message.content}</UserMessageContent>
+      <MessageContainer isUser={true} data-testid="user-message-container">
+        <UserMessageContent data-testid="user-message-content">{message.content}</UserMessageContent>
       </MessageContainer>
     );
   }
   
   return (
-    <MessageContainer isUser={false}>
-      <ModelInfo>
-        <ModelIcon />
-        <ModelName>Databricks LLM</ModelName>
+    <MessageContainer isUser={false} data-testid="bot-message-container">
+      <ModelInfo data-testid="model-info">
+        <ModelIcon data-testid="model-icon" />
+        <ModelName data-testid="model-name">Databricks LLM</ModelName>
       </ModelInfo>
       
-      <BotMessageContent>
+      <BotMessageContent data-testid="bot-message-content">
         <ReactMarkdown>{message.content}</ReactMarkdown>
         <MessageFooter>
           <SourcesRow>
             <SourcesButton>Sources</SourcesButton>
           </SourcesRow>
-          <MessageActions>
+          <MessageActions data-testid="message-actions">
             <CopyButton title="Copy" />
             <RefreshButton title="Regenerate" />
             <ThumbsUpButton title="Thumbs Up" />

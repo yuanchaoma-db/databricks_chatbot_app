@@ -11,15 +11,15 @@ interface InputContainerProps {
 
 const InputContainer = styled.div<InputContainerProps>`
   width: 100%;
-  max-width: 720px;
-  min-height: 90px;
+  max-width: 680px;
+  min-height: 50px;
   height: auto;
   position: relative;
   border: 1px solid #C0CDD8;
   border-radius: 12px;
   padding: 10px 12px;
   background-color: white;
-  box-shadow: 0px 2px 3px -1px rgba(0, 0, 0, 0.05), 0px 1px 0px 0px rgba(0, 0, 0, 0.02);
+  box-shadow: 0px 1px 3px -1px rgba(0, 0, 0, 0.05), 0px 2px 0px 0px rgba(0, 0, 0, 0.05);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -36,13 +36,13 @@ const TextArea = styled.textarea`
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
-  min-height: 20px;
-  max-height: 150px;
+  min-height: 40px;
+  max-height: 90px;
   overflow-y: auto;
   display: block;
   background-color: transparent;
   font-family: inherit;
-  margin-bottom: 24px;
+  margin-bottom: 30px;
   resize: none;
   box-sizing: border-box;
 `;
@@ -53,6 +53,7 @@ const ButtonsLeft = styled.div`
   position: absolute;
   bottom: 12px;
   left: 12px;
+  z-index: 2;
 `;
 
 const ButtonsRight = styled.div`
@@ -61,6 +62,7 @@ const ButtonsRight = styled.div`
   position: absolute;
   bottom: 12px;
   right: 12px;
+  z-index: 2;
 `;
 
 const InputButton = styled.button`
@@ -113,7 +115,8 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false }) => {
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+      const newHeight = Math.max(50, Math.min(textareaRef.current.scrollHeight, 100));
+      textareaRef.current.style.height = `${newHeight}px`;
     }
   }, [inputValue]);
   
@@ -121,6 +124,9 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false }) => {
     if (inputValue.trim() && !loading) {
       await sendMessage(inputValue);
       setInputValue('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = '50px';
+      }
     }
   };
   

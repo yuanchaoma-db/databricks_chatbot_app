@@ -79,23 +79,15 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const createChat = async () => {
     try {
-      // Call API to create a new chat
       const newChat = await createNewChat();
-      
-      // Update chats list
       setChats((prev) => [newChat, ...prev]);
-      
-      // Set as current chat
       setCurrentChat(newChat);
-      
-      // Clear messages
       setMessages([]);
       
       // Ensure sidebar is open to show the new chat
       if (!isSidebarOpen) {
         setIsSidebarOpen(true);
       }
-      
       return newChat;
     } catch (error) {
       console.error('Failed to create new chat:', error);
