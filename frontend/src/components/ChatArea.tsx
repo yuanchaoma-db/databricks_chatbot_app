@@ -3,7 +3,6 @@ import styled from 'styled-components';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { useChat } from '../context/ChatContext';
-import { FaSpinner } from 'react-icons/fa';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import ChatTopNav from './ChatTopNav';
 
@@ -29,7 +28,7 @@ const ChatContent = styled.div`
   flex: 1;
   padding: 0 16px;
   overflow-y: auto;
-  height: calc(100vh - 48px); /* Subtract the height of the top nav */
+  height: calc(100vh - 48px); 
 `;
 
 const WelcomeContainer = styled.div<{ visible: boolean }>`
@@ -64,6 +63,7 @@ const SuggestionButton = styled.button`
   display: flex;
   align-items: center;
   text-wrap-mode: nowrap;
+  text-overflow: ellipsis;
   gap: 8px;
   padding: 8px 8px;
   background-color: #FFFFFF;
