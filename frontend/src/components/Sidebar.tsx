@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
+import { Chat } from '../types';
 
 interface SidebarContainerProps {
   isOpen: boolean;
@@ -23,18 +24,31 @@ const SidebarHeader = styled.div`
   align-items: center;
   padding: 8px 0;
   margin-bottom: 8px;
+
 `;
 
 const SidebarHeaderText = styled.div`
   font-size: 18px;
   font-weight: 600;
-  color: #333333;
 `;
 
 const ChatList = styled.div`
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
+`;
+
+const SessionGroup = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+`;
+
+const SessionHeader = styled.div`
+  font-size: 12px;
+  color: #666;
+  padding: 8px 12px;
+  border-bottom: 1px solid #E0E0E0;
 `;
 
 const ChatItem = styled.div<{ active: boolean }>`
@@ -42,6 +56,8 @@ const ChatItem = styled.div<{ active: boolean }>`
   cursor: pointer;
   font-size: 13px;
   color: ${props => props.active ? '#0E538B' : '#11171C'};
+  background-color: ${props => props.active ? 'rgba(34, 114, 180, 0.08)' : 'transparent'};
+  border-radius: 4px;
   height: 32px;
   display: flex;
   align-items: center;
@@ -50,8 +66,7 @@ const ChatItem = styled.div<{ active: boolean }>`
   position: relative;
   overflow: hidden;
   white-space: nowrap;
-  background-color: ${props => props.active ? 'rgba(34, 114, 180, 0.08)' : 'transparent'};
-  border-radius: 4px;
+
   
   &:hover {
     background-color: rgba(34, 114, 180, 0.08);
@@ -66,38 +81,89 @@ const ChatItemText = styled.span`
   flex: 1;
 `;
 
+const DateHeader = styled.div`
+  font-size: 13px;
+  font-weight: 600;
+  color: #5F7281;
+  padding: 16px 12px 8px 12px;
+`;
+
 const Sidebar: React.FC = () => {
-  const { chats, currentChat, selectChat, isSidebarOpen, createChat } = useChat();
-  //TODO: Add a new chat button
-  const handleNewChat = async () => {
-    try {
-      await createChat();
-    } catch (error)  {
-      console.error('Failed to create new chat:', error);
-    }
-  };
-  
+  const { chats, currentChat, selectChat, isSidebarOpen } = useChat();
+
+  // Group chats by date categories and sessions
+  const groupedChats = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const lastWeek = new Date(today);
+    lastWeek.setDate(lastWeek.getDate() - 7);
+
+    // First group by date category
+    const dateGroups: { [key: string]: { [key: string]: Chat[] } } = {
+      'Today': {},
+      'Yesterday': {},
+      'Previous 7 days': {},
+      'Older': {}
+    };
+
+    chats.forEach(chat => {
+      const chatDate = new Date(chat.timestamp);
+      chatDate.setHours(0, 0, 0, 0);
+      
+      let dateCategory: string;
+      if (chatDate.getTime() === today.getTime()) {
+        dateCategory = 'Today';
+      } else if (chatDate.getTime() === yesterday.getTime()) {
+        dateCategory = 'Yesterday';
+      } else if (chatDate >= lastWeek) {
+        dateCategory = 'Previous 7 days';
+      } else {
+        dateCategory = 'Older';
+      }
+
+      // Then group by session within each date category
+      if (!dateGroups[dateCategory][chat.sessionId]) {
+        dateGroups[dateCategory][chat.sessionId] = [];
+      }
+      dateGroups[dateCategory][chat.sessionId].push(chat);
+    });
+
+    return dateGroups;
+  }, [chats]);
+
   return (
     <SidebarContainer isOpen={isSidebarOpen} data-testid="sidebar">
-      {isSidebarOpen && (
-        <>
-          <SidebarHeader data-testid="sidebar-header">
-            <SidebarHeaderText data-testid="sidebar-header-text">Recent chats</SidebarHeaderText>
-          </SidebarHeader>
-          <ChatList data-testid="chat-list">
-            {chats.map(chat => (
-              <ChatItem 
-                key={chat.id} 
-                active={currentChat?.id === chat.id}
-                onClick={() => selectChat(chat.id)}
-                data-testid={`chat-item-${chat.id}`}
-              >
-                <ChatItemText>{chat.title}</ChatItemText>
-              </ChatItem>
-            ))}
-          </ChatList>
-        </>
-      )}
+      <SidebarHeader data-testid="sidebar-header">
+        <SidebarHeaderText>Recent chats</SidebarHeaderText>
+      </SidebarHeader>
+      
+      <ChatList data-testid="chat-list">
+        {Object.entries(groupedChats).map(([dateCategory, sessions]) => {
+          // Only show date categories that have chats
+          if (Object.keys(sessions).length === 0) return null;
+
+          return (
+            <div key={dateCategory}>
+              <DateHeader>{dateCategory}</DateHeader>
+              {Object.entries(sessions).map(([sessionId, sessionChats]) => (
+                <SessionGroup key={sessionId} data-testid={`session-group-${sessionId}`}>
+                  <ChatItem
+                    active={currentChat?.sessionId === sessionId}
+                    onClick={() => selectChat(sessionChats[0].id)}
+                    data-testid={`chat-item-${sessionChats[0].id}`}
+                  >
+                    <ChatItemText>{sessionChats[0].firstQuery}</ChatItemText>
+                  </ChatItem>
+                </SessionGroup>
+              ))}
+            </div>
+          );
+        })}
+      </ChatList>
     </SidebarContainer>
   );
 };

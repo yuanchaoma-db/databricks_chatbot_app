@@ -87,6 +87,10 @@ const AtButton = styled(InputButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const ClipButton = styled(InputButton)`
@@ -94,6 +98,10 @@ const ClipButton = styled(InputButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const SendButton = styled(InputButton)`
@@ -101,6 +109,10 @@ const SendButton = styled(InputButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 interface ChatInputProps {

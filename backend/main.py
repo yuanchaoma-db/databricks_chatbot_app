@@ -100,7 +100,6 @@ async def chat(message: MessageRequest):
             temperature=0.7,
             messages=[ChatMessage(content=message.content, role=ChatMessageRole.USER)],
         )
-        print(response)
         bot_response_text = response.choices[0].message.content
         
         return MessageResponse(

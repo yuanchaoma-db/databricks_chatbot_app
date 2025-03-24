@@ -17,14 +17,8 @@ export const getChatHistory = async (): Promise<Chat[]> => {
   try {
     //const response = await axios.get(`${API_URL}/chats`);
     //return response.data.chats;
-    const chats = [
-      { id: '1', title: 'Kids activities', messages: []},
-      { id: '2', title: 'Project Brainstorming', messages: []},
-      { id: '3', title: 'Work discussions', messages: []},
-      { id: '4', title: 'Shared with me discussions', messages: []},
-      { id: '5', title: 'Visual languages for data apps', messages: []},
-    ];
-    return chats;
+    
+    return [];
   } catch (error) {
     console.error('Error fetching chat history:', error);
     throw error;
@@ -37,8 +31,10 @@ export const createNewChat = async (): Promise<Chat> => {
     // For now, we'll create a mock chat
     const newChat: Chat = {
       id: `chat-${Date.now()}`,
-      title: 'New Chat',
+      sessionId: 'session-1',
+      firstQuery: 'Kids activities',
       messages: [],
+      timestamp: new Date(),
     };
     
     // If you have an actual API endpoint:

@@ -26,7 +26,7 @@ const LeftContainer = styled.div<LeftContainerProps>`
   left: 0;
   z-index: 10;
   height: 100vh;
-  width: ${props => props.isOpen ? '300px' : '100px'};
+  width: ${props => props.isOpen ? '300px' : '0px'};
   border-right: ${props => props.isOpen ? '1px solid #DCDCDC' : 'none'};
   transition: width 0.2s ease;
 `;
@@ -55,7 +55,8 @@ const MenuButton = styled.button`
   flex-shrink: 0;
   
   &:hover {
-    background-color: #F5F5F5;
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
   }
 `;
 
@@ -73,7 +74,8 @@ const NewChatButton = styled.button<NewChatButtonProps>`
   box-shadow: ${props => props.isSidebarOpen ? '0px 1px 0px rgba(0, 0, 0, 0.05)' : 'none'};
   height: 32px;
   &:hover {
-    background-color: #F5F5F5;
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
   }
 `;
 const NewChatIcon = styled.div`
@@ -87,14 +89,10 @@ const NewChatIcon = styled.div`
 
 
 const LeftComponent: React.FC<LeftComponentProps> = () => {
-  const { isSidebarOpen, toggleSidebar, createChat } = useChat();
+  const { isSidebarOpen, toggleSidebar, startNewSession } = useChat();
   // TODO: add a loading state
-  const handleNewChat = async () => {
-    try {
-      await createChat();
-    } catch (error) {
-      console.error('Failed to create new chat:', error);
-    }
+  const handleNewChat = () => {
+    startNewSession();
   };
   
   return (

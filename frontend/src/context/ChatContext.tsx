@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
 import { sendMessage as apiSendMessage, getChatHistory, createNewChat } from '../api/chatApi';
+import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
   currentChat: Chat | null;
@@ -12,6 +13,7 @@ interface ChatContextType {
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   createChat: () => Promise<Chat>;
+  startNewSession: () => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -22,6 +24,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(uuid());
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -42,35 +45,93 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const sendMessage = async (content: string) => {
     if (!content.trim()) return;
 
-    // Add user message
-    const userMessage: Message = { content, role: 'user' };
-    setMessages((prev) => [...prev, userMessage]);
-    
-    // Set loading state
+    const userMessage: Message = { 
+      content, 
+      role: 'user',
+      timestamp: new Date()
+    };
+
+    let chatToUse: Chat;
+
+    if (!currentChat) {
+      chatToUse = {
+        id: uuid(),
+        sessionId: currentSessionId,
+        firstQuery: content,
+        messages: [userMessage],
+        timestamp: new Date(),
+        isActive: true
+      };
+      
+      setCurrentChat(chatToUse);
+      setChats(prev => {
+        const updatedChats = [chatToUse, ...prev];
+        return updatedChats;
+      });
+      setMessages([userMessage]);
+    } else {
+      chatToUse = currentChat; 
+      const updatedMessages = [...messages, userMessage];
+      
+      setMessages(updatedMessages);
+      setChats(prev => prev.map(chat => 
+        chat.sessionId === currentChat.sessionId
+          ? { ...chat, messages: updatedMessages }
+          : chat
+      ));
+    }
+
     setLoading(true);
     
     try {
-      // Send to API
       const response = await apiSendMessage(content);
       
-      // Add bot response
-      setMessages((prev) => [...prev, response]);
+      const botMessage = { ...response, timestamp: new Date() };
+      const updatedMessages = [...messages, userMessage, botMessage];
+      console.log('Final updated messages:', updatedMessages);
+      
+      setMessages(updatedMessages);
+      setChats(prev => {
+        const newChats = prev.map(chat => 
+          chat.sessionId === chatToUse.sessionId
+            ? { ...chat, messages: updatedMessages }
+            : chat
+        );
+        return newChats;
+      });
     } catch (error) {
-      // Handle error
       const errorMessage: Message = { 
         content: 'Sorry, I encountered an error. Please try again.', 
-        role: 'assistant' 
+        role: 'assistant',
+        timestamp: new Date()
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      const updatedMessages = [...messages, userMessage, errorMessage];
+      
+      setMessages(updatedMessages);
+      setChats(prev => {
+        const newChats = prev.map(chat => 
+          chat.sessionId === chatToUse.sessionId // Use chatToUse instead of currentChat
+            ? { ...chat, messages: updatedMessages }
+            : chat
+        );
+        return newChats;
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const selectChat = (chatId: string) => {
-    const selected = chats.find(chat => chat.id === chatId) || null;
-    setCurrentChat(selected);
-    setMessages(selected?.messages || []);
+    const selected = chats.find(chat => chat.id === chatId);
+    if (selected) {
+      setCurrentChat(selected);
+      
+      const sessionMessages = chats
+        .filter(chat => chat.sessionId === selected.sessionId)
+        .flatMap(chat => chat.messages);
+      
+      setMessages(sessionMessages);
+    }
   };
 
   const toggleSidebar = () => {
@@ -84,15 +145,18 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setCurrentChat(newChat);
       setMessages([]);
       
-      // Ensure sidebar is open to show the new chat
-      if (!isSidebarOpen) {
-        setIsSidebarOpen(true);
-      }
       return newChat;
     } catch (error) {
       console.error('Failed to create new chat:', error);
       throw error;
     }
+  };
+
+  const startNewSession = () => {
+    const newSessionId = uuid();
+    setCurrentSessionId(newSessionId);
+    setCurrentChat(null);
+    setMessages([]);
   };
 
   return (
@@ -105,7 +169,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectChat,
       isSidebarOpen,
       toggleSidebar,
-      createChat
+      createChat,
+      startNewSession
     }}>
       {children}
     </ChatContext.Provider>

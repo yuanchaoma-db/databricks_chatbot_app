@@ -7,6 +7,7 @@ import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
 import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
 import sourceIconUrl from '../assets/images/source_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
+import downIconUrl from '../assets/images/down_icon.svg';
 import { Message } from '../types';
 
 const MessageContainer = styled.div<{ isUser: boolean }>`
@@ -102,6 +103,10 @@ const CopyButton = styled(ActionButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const RefreshButton = styled(ActionButton)`
@@ -109,6 +114,10 @@ const RefreshButton = styled(ActionButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const ThumbsUpButton = styled(ActionButton)`
@@ -116,6 +125,10 @@ const ThumbsUpButton = styled(ActionButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const ThumbsDownButton = styled(ActionButton)`
@@ -123,6 +136,10 @@ const ThumbsDownButton = styled(ActionButton)`
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
+  &:hover {
+    background-color: rgba(34, 114, 180, 0.08);
+    color: #0E538B;
+  }
 `;
 
 const SourcesButton = styled.button`
@@ -137,15 +154,16 @@ const SourcesButton = styled.button`
   padding: 4px 8px;
   border: 1px solid #E0E0E0;
   border-radius: 4px;
-  background-image: url(${sourceIconUrl});
+  background-image: url(${downIconUrl});
   background-size: 14px;
   background-repeat: no-repeat;
-  background-position: left 4px center;
-  padding-left: 24px;
+  background-position: right 4px center;
+  padding-right: 24px;
   
   &:hover {
-    color: #11171C;
-    background-color: #F5F5F5;
+    background-color: rgba(34, 114, 180, 0.08);
+    border: 1px solid #2272B4;
+    color: #0E538B;
   }
 `;
 

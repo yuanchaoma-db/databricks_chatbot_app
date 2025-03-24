@@ -38,7 +38,7 @@ const WelcomeContainer = styled.div<{ visible: boolean }>`
   justify-content: center;
   height: 100%;
   max-width: 660px;
-  margin: 0 auto;
+  margin: auto;
   padding: 24px 16px;
 `;
 
@@ -139,11 +139,11 @@ const Spinner = styled.div`
   display: inline-block;
   width: 16px;
   height: 16px;
-  border: 2px solid transparent;
-  border-top: 2px solid #5F7281;
-  border-right: 2px solid #5F7281;
+  border: 1px solid transparent;
+  border-top: 1px solid #5F7281;
+  border-right: 1px solid #5F7281;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.5s linear infinite;
   margin-right: 8px;
   
   @keyframes spin {
