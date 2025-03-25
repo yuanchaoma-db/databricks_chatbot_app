@@ -4,6 +4,7 @@ export interface Message {
   role: 'user' | 'assistant';
   timestamp?: Date;
   isThinking?: boolean;
+  model?: string;
 }
 
 export interface Chat {

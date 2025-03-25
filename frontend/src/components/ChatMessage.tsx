@@ -260,7 +260,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
     <MessageContainer isUser={false} data-testid="bot-message-container">
       <ModelInfo data-testid="model-info">
         <ModelIcon data-testid="model-icon" />
-        <ModelName data-testid="model-name">Databricks LLM</ModelName>
+        <ModelName data-testid="model-name">
+          {message.model || 'Databricks LLM'}
+        </ModelName>
       </ModelInfo>
       
       <BotMessageContent data-testid="bot-message-content">

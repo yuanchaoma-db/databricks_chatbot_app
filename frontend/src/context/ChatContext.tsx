@@ -17,6 +17,7 @@ interface ChatContextType {
   regenerateMessage: (messageId: string) => Promise<void>;
   rateMessage: (messageId: string, rating: 'up' | 'down') => void;
   messageRatings: {[messageId: string]: 'up' | 'down'};
+  logout: () => void;
 }
  
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -27,7 +28,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string>(uuid());
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!currentChat) {
       chatToUse = {
         id: uuid(),
-        sessionId: currentSessionId,
+        sessionId: currentSessionId || uuid(),
         firstQuery: content,
         messages: [userMessage, thinkingMessage],
         timestamp: new Date(),
@@ -89,25 +90,44 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setLoading(true);
     
     try {
-      const response = await apiSendMessage(content);
+      let accumulatedContent = '';
       
-      const botMessage = { 
-        ...response, 
+      await apiSendMessage(content, (chunk) => {
+        accumulatedContent += chunk;
+        
+        // Update the message with accumulated content and set isThinking to false
+        setMessages(prev => prev.map(msg => 
+          msg.id === thinkingMessage.id 
+            ? { 
+                ...msg, 
+                content: accumulatedContent,
+                isThinking: false  
+              }
+            : msg
+        ));
+      });
+
+      // Final message update when stream is complete
+      const botMessage: Message = {
         id: thinkingMessage.id,
-        timestamp: new Date() 
+        content: accumulatedContent,
+        role: 'assistant',
+        timestamp: new Date(),
+        isThinking: false
       };
 
-      // Use updatedMessages instead of messages to include the latest state
-      const finalMessages = updatedMessages.map(msg => 
+      setMessages(prev => prev.map(msg => 
         msg.id === thinkingMessage.id ? botMessage : msg
-      );
-      
-      setMessages(finalMessages);
+      ));
+
       setChats(prev => prev.map(chat => 
         chat.id === chatToUse.id
-          ? { ...chat, messages: finalMessages }
+          ? { ...chat, messages: messages.map(msg => 
+              msg.id === thinkingMessage.id ? botMessage : msg
+            ) }
           : chat
       ));
+
     } catch (error) {
       const errorMessage: Message = { 
         id: thinkingMessage.id,
@@ -116,15 +136,15 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         timestamp: new Date()
       };
 
-      // Use updatedMessages instead of messages to include the latest state
-      const finalMessages = updatedMessages.map(msg => 
+      setMessages(prev => prev.map(msg => 
         msg.id === thinkingMessage.id ? errorMessage : msg
-      );
-      
-      setMessages(finalMessages);
+      ));
+
       setChats(prev => prev.map(chat => 
         chat.id === chatToUse.id
-          ? { ...chat, messages: finalMessages }
+          ? { ...chat, messages: messages.map(msg => 
+              msg.id === thinkingMessage.id ? errorMessage : msg
+            ) }
           : chat
       ));
     } finally {
@@ -194,26 +214,46 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setMessages(messagesWithThinking);
 
     try {
-      const response = await apiSendMessage(previousUserMessage.content);
-      const botMessage = { 
-        ...response, 
+      let accumulatedContent = '';
+      
+      await apiSendMessage(previousUserMessage.content, (chunk) => {
+        accumulatedContent += chunk;
+        
+        // Update the thinking message with accumulated content
+        setMessages(prev => {
+          const updatedMessages = [...prev];
+          updatedMessages[messageIndex] = {
+            ...thinkingMessage,
+            content: accumulatedContent,
+            isThinking: false
+          };
+          return updatedMessages;
+        });
+      });
+
+      // Final message update when stream is complete
+      const botMessage: Message = {
         id: messageId,
-        timestamp: new Date() 
+        content: accumulatedContent,
+        role: 'assistant',
+        timestamp: new Date(),
+        isThinking: false
       };
 
-      // Replace thinking message with the new bot message
-      const updatedMessages = [...messages];
-      updatedMessages[messageIndex] = botMessage;
-      
-      setMessages(updatedMessages);
-      setChats(prev => {
-        const newChats = prev.map(chat => 
-          chat.sessionId === currentChat?.sessionId
-            ? { ...chat, messages: updatedMessages }
-            : chat
-        );
-        return newChats;
+      setMessages(prev => {
+        const updatedMessages = [...prev];
+        updatedMessages[messageIndex] = botMessage;
+        return updatedMessages;
       });
+
+      setChats(prev => prev.map(chat => 
+        chat.sessionId === currentChat?.sessionId
+          ? { ...chat, messages: messages.map(msg => 
+              msg.id === messageId ? botMessage : msg
+            ) }
+          : chat
+      ));
+
     } catch (error) {
       const errorMessage: Message = { 
         id: messageId,
@@ -221,10 +261,12 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         role: 'assistant',
         timestamp: new Date()
       };
-      // Replace the error message at the same index
-      const updatedMessages = [...messages];
-      updatedMessages[messageIndex] = errorMessage;
-      setMessages(updatedMessages);
+      
+      setMessages(prev => {
+        const updatedMessages = [...prev];
+        updatedMessages[messageIndex] = errorMessage;
+        return updatedMessages;
+      });
     } finally {
       setLoading(false);
     }
@@ -242,6 +284,17 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
   };
 
+  const logout = () => {
+    // Clear all chat data
+    setMessages([]);
+    setChats([]);
+    setCurrentChat(null);
+    setCurrentSessionId(null);
+    
+    // Add any additional logout logic here (e.g., API calls, clearing tokens)
+    // You might want to redirect to a login page or show the welcome screen
+  };
+
   return (
     <ChatContext.Provider value={{
       currentChat,
@@ -257,6 +310,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       regenerateMessage,
       rateMessage,
       messageRatings,
+      logout,
     }}>
       {children}
     </ChatContext.Provider>

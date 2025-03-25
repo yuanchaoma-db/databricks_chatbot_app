@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from databricks.sdk import WorkspaceClient
@@ -9,9 +10,9 @@ import os
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime
-
-# Load environment variables
-load_dotenv()
+import json
+import httpx
+load_dotenv(override=True)
 
 app = FastAPI(title="Databricks Chat API")
 
@@ -28,7 +29,7 @@ app.add_middleware(
 # app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Initialize Databricks workspace client
-client = WorkspaceClient(host=os.getenv("DATABRICKS_HOST"), token=os.getenv("DATABRICKS_TOKEN"))
+client = WorkspaceClient(host=f"https://{os.getenv("DATABRICKS_HOST")}", token=os.getenv("DATABRICKS_TOKEN"))
 
 # Constants
 SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
@@ -53,59 +54,59 @@ class CreateChatRequest(BaseModel):
     title: str
 
 # In-memory storage for chats (in a production app, use a database)
-chats_db = {
-    "1": {
-        "id": "1",
-        "title": "Kids activities",
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    },
-    "2": {
-        "id": "2",
-        "title": "Project Brainstorming",
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    },
-    "3": {
-        "id": "3",
-        "title": "Work discussions",
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    },
-    "4": {
-        "id": "4",
-        "title": "Shared with me discussions",
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    },
-    "5": {
-        "id": "5",
-        "title": "Visual languages for data apps",
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    }
-}
+chats_db = {}
 
 # Routes
 @app.get("/")
 async def root():
     return {"message": "Databricks Chat API is running"}
 
-@app.post("/api/chat", response_model=MessageResponse)
+@app.post("/api/chat")
 async def chat(message: MessageRequest):
     try:
-        # Make the API call to Databricks
-        response = client.serving_endpoints.query(
-            SERVING_ENDPOINT_NAME,
-            temperature=0.7,
-            messages=[ChatMessage(content=message.content, role=ChatMessageRole.USER)],
-        )
-        bot_response_text = response.choices[0].message.content
+        headers = {
+            "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
+            "Content-Type": "application/json"
+        }
         
-        return MessageResponse(
-            content=bot_response_text,
-            role="assistant"
+        async def generate():
+            async with httpx.AsyncClient() as client:
+                async with client.stream('POST', 
+                    f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+                    headers=headers,
+                    json={
+                        "messages": [{"role": "user", "content": message.content}],
+                        "stream": True
+                    }
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if line.startswith('data: '):
+                            try:
+                                json_str = line[6:]  # Skip "data: "
+                                if json_str.strip() == '[DONE]':
+                                    yield "event: done\ndata: {}\n\n"
+                                    break
+                                    
+                                data = json.loads(json_str)
+                                if 'choices' in data and len(data['choices']) > 0:
+                                    delta = data['choices'][0].get('delta', {})
+                                    content = delta.get('content', '')
+                                    if content:
+                                        yield f"data: {json.dumps({'content': content})}\n\n"
+                                        
+                            except json.JSONDecodeError as e:
+                                print(f"Error parsing JSON: {e}")
+                                continue
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+            }
         )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling Databricks API: {str(e)}")
 
@@ -206,6 +207,54 @@ async def add_message_to_chat(chat_id: str, message: MessageRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling Databricks API: {str(e)}")
 
+# import httpx
+# import asyncio
+# import json
+
+# async def test_chat():
+#     headers = {
+#             "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
+#             "Content-Type": "application/json"
+#         }
+        
+#     async def generate():
+#         async with httpx.AsyncClient() as client:
+#             response = await client.post(
+#                 f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+#                 headers=headers,
+#                 json={
+#                     "messages": [{"role": "user", "content": message.content}],
+#                     "stream": True
+#                 }
+#             )
+            
+#             # Split the response by lines and process each SSE event
+#             for line in response.content.decode().split('\n'):
+#                 if line.startswith('data: '):
+#                     # Remove 'data: ' prefix and parse JSON
+#                     try:
+#                         json_str = line[6:]  # Skip "data: "
+#                         if json_str.strip() == '[DONE]':
+#                             # Send done event
+#                             yield "event: done\ndata: {}\n\n"
+#                             break
+                            
+#                         data = json.loads(json_str)
+                        
+#                         # Extract content from the delta if it exists
+#                         if 'choices' in data and len(data['choices']) > 0:
+#                             delta = data['choices'][0].get('delta', {})
+#                             content = delta.get('content', '')
+#                             if content:
+#                                 # Send the content chunk
+#                                 yield f"data: {json.dumps({'content': content})}\n\n"
+                                
+#                     except json.JSONDecodeError as e:
+#                         print(f"Error parsing JSON: {e}")
+#                         continue
+#         # Check if response is successful
+# def main():
+#     asyncio.run(test_chat())
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
