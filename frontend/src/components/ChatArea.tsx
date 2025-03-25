@@ -127,15 +127,15 @@ const MessagesContainer = styled.div`
 const ChatArea: React.FC = () => {
   const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  
-  const hasMessages = messages.length > 0;
+  const [isRegenerating, setIsRegenerating] = useState(false);  
   
   useEffect(() => {
     if (messagesEndRef.current && !isRegenerating) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isRegenerating]);
+  
+  const hasMessages = messages.length > 0;
   
   const handleSuggestionClick = (suggestion: string) => {
     sendMessage(suggestion);
@@ -144,7 +144,6 @@ const ChatArea: React.FC = () => {
   const handleRegenerate = async (messageId: string) => {
     setIsRegenerating(true);
     await regenerateMessage(messageId);
-    setIsRegenerating(false);
   };
   
   return (
@@ -153,7 +152,7 @@ const ChatArea: React.FC = () => {
       <ChatContent data-testid="chat-content">
         <WelcomeContainer visible={!hasMessages} data-testid="welcome-container">
           <WelcomeMessage data-testid="welcome-message">What can I help with?</WelcomeMessage>
-          <ChatInput data-testid="chat-input" />
+          <ChatInput setIsRegenerating={setIsRegenerating} data-testid="chat-input" />
           <SuggestionButtons data-testid="suggestion-buttons">
             <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Find tables to query")}>
               <SuggestionIcon />
@@ -185,13 +184,13 @@ const ChatArea: React.FC = () => {
                 data-testid={`message-${index}`}
               />
             ))}
-            {/* {!isRegenerating && <div ref={messagesEndRef} />} */}
+            {!isRegenerating && <div ref={messagesEndRef} />}
           </MessagesContainer>
         )}
       </ChatContent>
       
       <FixedInputWrapper visible={hasMessages} data-testid="fixed-input-wrapper">
-        <ChatInput fixed={true} />
+        <ChatInput fixed={true} setIsRegenerating={setIsRegenerating} />
         <DisclaimerFixed>Chatbot may make mistakes. Check important info.</DisclaimerFixed>
       </FixedInputWrapper>
     </ChatContainer>

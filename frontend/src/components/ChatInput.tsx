@@ -95,9 +95,10 @@ const SendButton = styled(InputButton)`
 
 interface ChatInputProps {
   fixed?: boolean;
+  setIsRegenerating: (value: boolean) => void;
 }
 
-const ChatInput: React.FC<ChatInputProps> = ({ fixed = false }) => {
+const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating }) => {
   const [inputValue, setInputValue] = useState('');
   const { sendMessage, loading } = useChat();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -112,6 +113,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false }) => {
   
   const handleSubmit = async () => {
     if (inputValue.trim() && !loading) {
+      setIsRegenerating(false);
       await sendMessage(inputValue);
       setInputValue('');
       if (textareaRef.current) {

@@ -183,7 +183,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Replace with thinking indicator
     const thinkingMessage: Message = {
       id: messageId,
-      content: '',  // Empty content since we'll show the indicator
+      content: '',
       role: 'assistant',
       timestamp: new Date(),
       isThinking: true
@@ -197,7 +197,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const response = await apiSendMessage(previousUserMessage.content);
       const botMessage = { 
         ...response, 
-        id: uuid(),
+        id: messageId,
         timestamp: new Date() 
       };
 
@@ -216,7 +216,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
     } catch (error) {
       const errorMessage: Message = { 
-        id: uuid(),
+        id: messageId,
         content: 'Sorry, I encountered an error. Please try again.', 
         role: 'assistant',
         timestamp: new Date()
