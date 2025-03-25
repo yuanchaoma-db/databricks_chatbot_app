@@ -12,6 +12,9 @@ import uuid
 from datetime import datetime
 import json
 import httpx
+from databricks.sdk.service.serving import EndpointStateReady
+from fastapi import Query
+import requests
 load_dotenv(override=True)
 
 app = FastAPI(title="Databricks Chat API")
@@ -53,6 +56,9 @@ class ChatHistoryResponse(BaseModel):
 class CreateChatRequest(BaseModel):
     title: str
 
+class ServingEndpoint(BaseModel):
+    names: List[str]
+
 # In-memory storage for chats (in a production app, use a database)
 chats_db = {}
 
@@ -62,23 +68,22 @@ async def root():
     return {"message": "Databricks Chat API is running"}
 
 @app.post("/api/chat")
-async def chat(message: MessageRequest):
+async def chat(message: MessageRequest, model: str = Query(...)):
     try:
         headers = {
             "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
             "Content-Type": "application/json"
         }
-        
         async def generate():
             async with httpx.AsyncClient() as client:
                 try:
                     # First try with streaming
                     async with client.stream('POST', 
-                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
                         headers=headers,
                         json={
                             "messages": [{"role": "user", "content": message.content}],
-                            # "stream": True
+                            "stream": True
                         }
                     ) as response:
                         if response.status_code == 200:
@@ -235,6 +240,18 @@ async def add_message_to_chat(chat_id: str, message: MessageRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling Databricks API: {str(e)}")
+
+@app.get("/api/serving-endpoints")
+async def list_endpoints():
+    try:
+        serving_endpoints = []
+        endpoints = client.serving_endpoints.list()
+        for endpoint in endpoints:
+            if endpoint.state.ready == EndpointStateReady.READY and endpoint.task in ["llm/v1/chat"]:
+                serving_endpoints.append(endpoint.name)
+        return ServingEndpoint(names=serving_endpoints)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching endpoints: {str(e)}")
     
 if __name__ == "__main__":
     import uvicorn

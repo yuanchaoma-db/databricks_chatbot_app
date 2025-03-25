@@ -1,17 +1,21 @@
 import axios from 'axios';
-import { Message, Chat } from '../types';
+import { Message, Chat, ServingEndpoint } from '../types';
 
 const API_URL = 'http://localhost:8000/api';
 
-export const sendMessage = async (content: string, onChunk: (chunk: string) => void): Promise<void> => {
+export const sendMessage = async (
+  content: string, 
+  model: string,
+  onChunk: (chunk: string) => void
+): Promise<void> => {
   try {
-    const response = await fetch(`${API_URL}/chat`, {
+    const response = await fetch(`${API_URL}/chat?model=${model}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
       },
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, model })
     });
 
     if (!response.ok) {
@@ -64,30 +68,15 @@ export const getChatHistory = async (): Promise<Chat[]> => {
   }
 }; 
 
-export const createNewChat = async (): Promise<Chat> => {
+export const fetchServingEndpoints = async (): Promise<ServingEndpoint> => {
   try {
-    // You might want to make an actual API call here
-    // For now, we'll create a mock chat
-    const newChat: Chat = {
-      id: `chat-${Date.now()}`,
-      sessionId: 'session-1',
-      firstQuery: 'Kids activities',
-      messages: [],
-      timestamp: new Date(),
-    };
-    
-    // If you have an actual API endpoint:
-    // const response = await fetch('/api/chats', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json',
-    //   },
-    // });
-    // const newChat = await response.json();
-    
-    return newChat;
+    const response = await fetch(`${API_URL}/serving-endpoints`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return await response.json();
   } catch (error) {
-    console.error('Error creating new chat:', error);
+    console.error('Error fetching endpoints:', error);
     throw error;
   }
 };

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, createNewChat } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -8,16 +8,18 @@ interface ChatContextType {
   chats: Chat[];
   messages: Message[];
   loading: boolean;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, model: string) => Promise<void>;
   selectChat: (chatId: string) => void;
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   startNewSession: () => void;
   copyMessage: (content: string) => void;
-  regenerateMessage: (messageId: string) => Promise<void>;
+  regenerateMessage: (messageId: string, model: string) => Promise<void>;
   rateMessage: (messageId: string, rating: 'up' | 'down') => void;
   messageRatings: {[messageId: string]: 'up' | 'down'};
   logout: () => void;
+  selectedModel: string;
+  setSelectedModel: (model: string) => void;
 }
  
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -30,6 +32,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
+  const [selectedModel, setSelectedModel] = useState<string>('');
 
   useEffect(() => {
     const fetchChats = async () => {
@@ -47,8 +50,9 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     fetchChats();
   }, []);
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, model: string) => {
     if (!content.trim()) return;
+    setSelectedModel(model);
 
     const userMessage: Message = { 
       id: uuid(),
@@ -92,16 +96,15 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       let accumulatedContent = '';
       
-      await apiSendMessage(content, (chunk) => {
+      await apiSendMessage(content, model, (chunk) => {
         accumulatedContent += chunk;
         
-        // Update the message with accumulated content and set isThinking to false
         setMessages(prev => prev.map(msg => 
           msg.id === thinkingMessage.id 
             ? { 
                 ...msg, 
                 content: accumulatedContent,
-                isThinking: false  
+                isThinking: false,
               }
             : msg
         ));
@@ -113,7 +116,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         content: accumulatedContent,
         role: 'assistant',
         timestamp: new Date(),
-        isThinking: false
+        isThinking: false,
+        model: model
       };
 
       setMessages(prev => prev.map(msg => 
@@ -187,7 +191,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
   };
 
-  const regenerateMessage = async (messageId: string) => {
+  const regenerateMessage = async (messageId: string, model: string) => {
+    setSelectedModel(model);
     const messageIndex = messages.findIndex(msg => msg.id === messageId);
     if (messageIndex === -1) return;
 
@@ -206,7 +211,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       content: '',
       role: 'assistant',
       timestamp: new Date(),
-      isThinking: true
+      isThinking: true,
+      model: model
     };
     
     const messagesWithThinking = [...messages];
@@ -216,7 +222,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       let accumulatedContent = '';
       
-      await apiSendMessage(previousUserMessage.content, (chunk) => {
+      await apiSendMessage(previousUserMessage.content, model, (chunk) => {
         accumulatedContent += chunk;
         
         // Update the thinking message with accumulated content
@@ -225,7 +231,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           updatedMessages[messageIndex] = {
             ...thinkingMessage,
             content: accumulatedContent,
-            isThinking: false
+            isThinking: false,
+            model: model
           };
           return updatedMessages;
         });
@@ -237,7 +244,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         content: accumulatedContent,
         role: 'assistant',
         timestamp: new Date(),
-        isThinking: false
+        isThinking: false,
+        model: model
       };
 
       setMessages(prev => {
@@ -259,7 +267,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         id: messageId,
         content: 'Sorry, I encountered an error. Please try again.', 
         role: 'assistant',
-        timestamp: new Date()
+        timestamp: new Date(),
+        model: model
       };
       
       setMessages(prev => {
@@ -307,6 +316,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       toggleSidebar,
       startNewSession,
       copyMessage,
+      selectedModel,
+      setSelectedModel,
       regenerateMessage,
       rateMessage,
       messageRatings,
