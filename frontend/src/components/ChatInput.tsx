@@ -13,7 +13,7 @@ const InputContainer = styled.div<InputContainerProps>`
   width: 100%;
   max-width: 680px;
   min-height: 50px;
-  height: 100px;
+  height: 80px;
   position: relative;
   border: 1px solid #C0CDD8;
   border-radius: 12px;
@@ -82,28 +82,6 @@ const InputButton = styled.button`
   }
 `;
 
-const AtButton = styled(InputButton)`
-  background-image: url(${atIconUrl});
-  background-size: 16px;
-  background-repeat: no-repeat;
-  background-position: center;
-  &:hover {
-    background-color: rgba(34, 114, 180, 0.08);
-    color: #0E538B;
-  }
-`;
-
-const ClipButton = styled(InputButton)`
-  background-image: url(${clipIconUrl});
-  background-size: 16px;
-  background-repeat: no-repeat;
-  background-position: center;
-  &:hover {
-    background-color: rgba(34, 114, 180, 0.08);
-    color: #0E538B;
-  }
-`;
-
 const SendButton = styled(InputButton)`
   background-image: url(${sendIconUrl});
   background-size: 16px;
@@ -159,10 +137,6 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false }) => {
         onKeyDown={handleKeyDown}
         data-testid="chat-input-textarea"
       />
-      <ButtonsLeft data-testid="buttons-left">
-        <AtButton data-testid="at-button" />
-        <ClipButton data-testid="clip-button" />
-      </ButtonsLeft>
       <ButtonsRight data-testid="buttons-right">
         <SendButton onClick={handleSubmit} disabled={loading} data-testid="send-button" />
       </ButtonsRight>

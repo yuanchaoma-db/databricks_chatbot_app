@@ -9,6 +9,7 @@ import sourceIconUrl from '../assets/images/source_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import downIconUrl from '../assets/images/down_icon.svg';
 import { Message } from '../types';
+import { useChat } from '../context/ChatContext';
 
 const MessageContainer = styled.div<{ isUser: boolean }>`
   display: flex;
@@ -120,26 +121,26 @@ const RefreshButton = styled(ActionButton)`
   }
 `;
 
-const ThumbsUpButton = styled(ActionButton)`
+const ThumbsUpButton = styled(ActionButton)<{ active: boolean }>`
   background-image: url(${thumbsUpIconUrl});
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
-  &:hover {
+  ${props => props.active && `
     background-color: rgba(34, 114, 180, 0.08);
-    color: #0E538B;
-  }
+  `}
+
 `;
 
-const ThumbsDownButton = styled(ActionButton)`
+const ThumbsDownButton = styled(ActionButton)<{ active: boolean }>`
   background-image: url(${thumbsDownIconUrl});
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
-  &:hover {
+  ${props => props.active && `
     background-color: rgba(34, 114, 180, 0.08);
-    color: #0E538B;
-  }
+  `}
+  
 `;
 
 const SourcesButton = styled.button`
@@ -172,17 +173,85 @@ const SourcesRow = styled.div`
   gap: 8px;
 `;
 
+const ThinkingIndicator = styled.div`
+  font-size: 13px;
+  color: #5F7281;
+  margin-bottom: 8px;
+  align-self: flex-start;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const Spinner = styled.div`
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1px solid transparent;
+  border-top: 1px solid #5F7281;
+  border-right: 1px solid #5F7281;
+  border-radius: 50%;
+  animation: spin 0.5s linear infinite;
+  margin-right: 8px;
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+
 interface ChatMessageProps {
   message: Message;
+  onRegenerate: (messageId: string) => Promise<void>;
+  'data-testid'?: string;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
+  const { copyMessage, regenerateMessage, rateMessage, messageRatings } = useChat();
   const isUser = message.role === 'user';
+  
+  const currentRating = messageRatings[message.id];
+
+  const handleCopy = () => {
+    copyMessage(message.content);
+  };
+
+  const handleRegenerate = async () => {
+    await onRegenerate(message.id);
+  };
+
+  const handleThumbsUp = () => {
+    rateMessage(message.id, 'up');
+  };
+
+  const handleThumbsDown = () => {
+    rateMessage(message.id, 'down');
+  };
   
   if (isUser) {
     return (
       <MessageContainer isUser={true} data-testid="user-message-container">
-        <UserMessageContent data-testid="user-message-content">{message.content}</UserMessageContent>
+        <UserMessageContent data-testid="user-message-content">
+          {message.content}
+        </UserMessageContent>
+      </MessageContainer>
+    );
+  }
+
+  if (message.isThinking) {
+    return (
+      <MessageContainer isUser={false} data-testid="bot-message-container">
+        <ModelInfo data-testid="model-info">
+          <ModelIcon data-testid="model-icon" />
+          <ModelName data-testid="model-name">Databricks LLM</ModelName>
+        </ModelInfo>
+        <BotMessageContent>
+          <ThinkingIndicator>
+            <Spinner />
+            Thinking...
+          </ThinkingIndicator>
+        </BotMessageContent>
       </MessageContainer>
     );
   }
@@ -201,10 +270,28 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <SourcesButton>Sources</SourcesButton>
           </SourcesRow>
           <MessageActions data-testid="message-actions">
-            <CopyButton title="Copy" />
-            <RefreshButton title="Regenerate" />
-            <ThumbsUpButton title="Thumbs Up" />
-            <ThumbsDownButton title="Thumbs Down" />
+            <CopyButton 
+              onClick={handleCopy} 
+              title="Copy" 
+              data-testid={`copy-button-${message.id}`}
+            />
+            <RefreshButton 
+              onClick={handleRegenerate} 
+              title="Regenerate" 
+              data-testid={`refresh-button-${message.id}`}
+            />
+            <ThumbsUpButton 
+              onClick={handleThumbsUp} 
+              title="Thumbs Up" 
+              active={currentRating === 'up'}
+              data-testid={`thumbs-up-button-${message.id}`}
+            />
+            <ThumbsDownButton 
+              onClick={handleThumbsDown} 
+              title="Thumbs Down" 
+              active={currentRating === 'down'}
+              data-testid={`thumbs-down-button-${message.id}`}
+            />
           </MessageActions>
         </MessageFooter>
       </BotMessageContent>

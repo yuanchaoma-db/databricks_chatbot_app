@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import styled from 'styled-components';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
@@ -119,53 +119,32 @@ const DisclaimerFixed = styled.div`
 const MessagesContainer = styled.div`
   display: flex;
   flex-direction: column;
-  width: 680px;
+  width: 650px;
   margin: 0 auto;
   max-width: 100%;
 `;
 
-const ThinkingIndicator = styled.div`
-  font-size: 13px;
-  color: #5F7281;
-  margin-bottom: 8px;
-  align-self: flex-start;
-  text-align: left;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-`;
-
-const Spinner = styled.div`
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 1px solid transparent;
-  border-top: 1px solid #5F7281;
-  border-right: 1px solid #5F7281;
-  border-radius: 50%;
-  animation: spin 0.5s linear infinite;
-  margin-right: 8px;
-  
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
-`;
-
 const ChatArea: React.FC = () => {
-  const { messages, loading, isSidebarOpen, sendMessage } = useChat();
+  const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   
   const hasMessages = messages.length > 0;
   
   useEffect(() => {
-    if (messagesEndRef.current) {
+    if (messagesEndRef.current && !isRegenerating) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages, isRegenerating]);
   
   const handleSuggestionClick = (suggestion: string) => {
     sendMessage(suggestion);
+  };
+  
+  const handleRegenerate = async (messageId: string) => {
+    setIsRegenerating(true);
+    await regenerateMessage(messageId);
+    setIsRegenerating(false);
   };
   
   return (
@@ -199,15 +178,14 @@ const ChatArea: React.FC = () => {
         {hasMessages && (
           <MessagesContainer data-testid="messages-container">
             {messages.map((message, index) => (
-              <ChatMessage key={index} message={message} data-testid={`message-${index}`}/>
+              <ChatMessage 
+                key={index} 
+                message={message} 
+                onRegenerate={handleRegenerate}
+                data-testid={`message-${index}`}
+              />
             ))}
-            {loading && (
-              <ThinkingIndicator>
-                <Spinner />
-                Thinking...
-              </ThinkingIndicator>
-            )}
-            <div ref={messagesEndRef} />
+            {/* {!isRegenerating && <div ref={messagesEndRef} />} */}
           </MessagesContainer>
         )}
       </ChatContent>
