@@ -71,32 +71,61 @@ async def chat(message: MessageRequest):
         
         async def generate():
             async with httpx.AsyncClient() as client:
-                async with client.stream('POST', 
-                    f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
-                    headers=headers,
-                    json={
-                        "messages": [{"role": "user", "content": message.content}],
-                        "stream": True
-                    }
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if line.startswith('data: '):
-                            try:
-                                json_str = line[6:]  # Skip "data: "
-                                if json_str.strip() == '[DONE]':
-                                    yield "event: done\ndata: {}\n\n"
-                                    break
-                                    
-                                data = json.loads(json_str)
-                                if 'choices' in data and len(data['choices']) > 0:
-                                    delta = data['choices'][0].get('delta', {})
-                                    content = delta.get('content', '')
-                                    if content:
-                                        yield f"data: {json.dumps({'content': content})}\n\n"
-                                        
-                            except json.JSONDecodeError as e:
-                                print(f"Error parsing JSON: {e}")
-                                continue
+                try:
+                    # First try with streaming
+                    async with client.stream('POST', 
+                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+                        headers=headers,
+                        json={
+                            "messages": [{"role": "user", "content": message.content}],
+                            # "stream": True
+                        }
+                    ) as response:
+                        if response.status_code == 200:
+                            has_content = False
+                            async for line in response.aiter_lines():
+                                if line.startswith('data: '):
+                                    try:
+                                        json_str = line[6:]
+                                        data = json.loads(json_str)
+                                        if 'choices' in data and len(data['choices']) > 0:
+                                            delta = data['choices'][0].get('delta', {})
+                                            content = delta.get('content', '')
+                                            if content:
+                                                has_content = True
+                                                yield f"data: {json.dumps({'content': content})}\n\n"
+                                    except json.JSONDecodeError:
+                                        continue
+                            
+                            # If we reached the end without getting any content, fall back to non-streaming
+                            if not has_content:
+                                raise Exception("No streaming content received")
+
+                        else:
+                            raise Exception("Streaming not supported")
+
+                except Exception as e:
+                    print(f"Falling back to non-streaming: {str(e)}")
+                    # Fallback to non-streaming request
+                    response = await client.post(
+                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+                        headers=headers,
+                        json={
+                            "messages": [{"role": "user", "content": message.content}]
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'choices' in data and len(data['choices']) > 0:
+                            content = data['choices'][0]['message']['content']
+                            # Send the full content
+                            yield f"data: {json.dumps({'content': content})}\n\n"
+                            # Send done event
+                            yield "event: done\ndata: {}\n\n"
+                    else:
+                        raise HTTPException(status_code=response.status_code, 
+                                         detail="Error calling Databricks API")
 
         return StreamingResponse(
             generate(),
@@ -206,55 +235,7 @@ async def add_message_to_chat(chat_id: str, message: MessageRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error calling Databricks API: {str(e)}")
-
-# import httpx
-# import asyncio
-# import json
-
-# async def test_chat():
-#     headers = {
-#             "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
-#             "Content-Type": "application/json"
-#         }
-        
-#     async def generate():
-#         async with httpx.AsyncClient() as client:
-#             response = await client.post(
-#                 f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
-#                 headers=headers,
-#                 json={
-#                     "messages": [{"role": "user", "content": message.content}],
-#                     "stream": True
-#                 }
-#             )
-            
-#             # Split the response by lines and process each SSE event
-#             for line in response.content.decode().split('\n'):
-#                 if line.startswith('data: '):
-#                     # Remove 'data: ' prefix and parse JSON
-#                     try:
-#                         json_str = line[6:]  # Skip "data: "
-#                         if json_str.strip() == '[DONE]':
-#                             # Send done event
-#                             yield "event: done\ndata: {}\n\n"
-#                             break
-                            
-#                         data = json.loads(json_str)
-                        
-#                         # Extract content from the delta if it exists
-#                         if 'choices' in data and len(data['choices']) > 0:
-#                             delta = data['choices'][0].get('delta', {})
-#                             content = delta.get('content', '')
-#                             if content:
-#                                 # Send the content chunk
-#                                 yield f"data: {json.dumps({'content': content})}\n\n"
-                                
-#                     except json.JSONDecodeError as e:
-#                         print(f"Error parsing JSON: {e}")
-#                         continue
-#         # Check if response is successful
-# def main():
-#     asyncio.run(test_chat())
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
