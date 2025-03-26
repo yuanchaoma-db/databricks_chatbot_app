@@ -6,7 +6,14 @@ const API_URL = 'http://localhost:8000/api';
 export const sendMessage = async (
   content: string, 
   model: string,
-  onChunk: (chunk: { content?: string, sources?: any[] }) => void
+  onChunk: (chunk: { 
+    content?: string, 
+    sources?: any[],
+    metrics?: {
+      timeToFirstToken?: number;
+      totalTime?: number;
+    }
+  }) => void
 ): Promise<void> => {
   try {
     const response = await fetch(`${API_URL}/chat?model=${model}`, {

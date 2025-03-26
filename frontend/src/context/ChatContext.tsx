@@ -97,6 +97,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       let accumulatedContent = '';
       let messageSources: any[] | null = null;
+      let messageMetrics: { timeToFirstToken?: number; totalTime?: number } | null = null;
       
       await apiSendMessage(content, model, (chunk) => {
         if (chunk.content) {
@@ -105,6 +106,9 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (chunk.sources) {
           messageSources = chunk.sources;
         }
+        if (chunk.metrics) {
+          messageMetrics = chunk.metrics;
+        }
         
         // Update only the display messages
         setMessages(prev => prev.map(msg => 
@@ -112,7 +116,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             ? { 
                 ...msg, 
                 content: accumulatedContent,
-                sources: messageSources, // Update sources only when we have them
+                sources: messageSources,
+                metrics: messageMetrics,
                 isThinking: false,
               }
             : msg
@@ -127,7 +132,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         timestamp: new Date(),
         isThinking: false,
         model: model,
-        sources: messageSources
+        sources: messageSources,
+        metrics: messageMetrics
       };
 
       // Update display messages
@@ -239,9 +245,19 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     try {
       let accumulatedContent = '';
+      let messageSources: any[] | null = null;
+      let messageMetrics: { timeToFirstToken?: number; totalTime?: number } | null = null;
       
       await apiSendMessage(previousUserMessage.content, model, (chunk) => {
-        accumulatedContent += chunk;
+        if (chunk.content) {
+          accumulatedContent += chunk.content;
+        }
+        if (chunk.sources) {
+          messageSources = chunk.sources;
+        }
+        if (chunk.metrics) {
+          messageMetrics = chunk.metrics;
+        }
         
         // Update the thinking message with accumulated content
         setMessages(prev => {
@@ -249,6 +265,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           updatedMessages[messageIndex] = {
             ...thinkingMessage,
             content: accumulatedContent,
+            sources: messageSources,
+            metrics: messageMetrics,
             isThinking: false,
             model: model
           };
@@ -263,7 +281,9 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         role: 'assistant',
         timestamp: new Date(),
         isThinking: false,
-        model: model
+        model: model,
+        sources: messageSources,
+        metrics: messageMetrics
       };
 
       setMessages(prev => {

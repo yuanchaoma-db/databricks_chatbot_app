@@ -6,6 +6,10 @@ export interface Message {
   isThinking?: boolean;
   model?: string;
   sources?: any[] | null;
+  metrics?: {
+    timeToFirstToken?: number;
+    totalTime?: number;
+  } | null;
 }
 
 export interface Chat {

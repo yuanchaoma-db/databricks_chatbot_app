@@ -16,6 +16,7 @@ from databricks.sdk.service.serving import EndpointStateReady
 from fastapi import Query
 import requests
 import backoff
+import time  # Add this import at the top
 load_dotenv(override=True)
 
 app = FastAPI(title="Databricks Chat API")
@@ -154,6 +155,9 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                 else:
                     try:
                         print("streaming is running")
+                        start_time = time.time()
+                        first_token_time = None
+                        
                         async with client.stream('POST', 
                             f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
                             headers=headers,
@@ -162,7 +166,7 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                                 "stream": True,
                                 "databricks_options": {"return_trace": True}
                             },
-                            timeout=30.0  # Add explicit timeout
+                            timeout=30.0
                         ) as response:
                             if response.status_code == 200:
                                 has_content = False
@@ -174,7 +178,11 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                                             json_str = line[6:]
                                             data = json.loads(json_str)
                                             
-                                            # Extract sources from trace data
+                                            # Record time of first token
+                                            if first_token_time is None and 'choices' in data and len(data['choices']) > 0:
+                                                first_token_time = time.time()
+                                                ttft = first_token_time - start_time
+                                                
                                             sources = await extract_sources_from_trace(data)
                                             
                                             if 'choices' in data and len(data['choices']) > 0:
@@ -183,7 +191,11 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                                                 
                                                 response_data = {
                                                     'content': content if content else None,
-                                                    'sources': sources if sources else None
+                                                    'sources': sources if sources else None,
+                                                    'metrics': {
+                                                        'timeToFirstToken': ttft if first_token_time is not None else None,
+                                                        'totalTime': time.time() - start_time
+                                                    }
                                                 }
                                                 if content or sources:
                                                     has_content = True
@@ -197,6 +209,8 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                                         'supports_streaming': True,
                                         'last_checked': datetime.now()
                                     }
+                                    total_time = time.time() - start_time
+                                    yield f"data: {json.dumps({'metrics': {'timeToFirstToken': ttft, 'totalTime': total_time}})}\n\n"
                                 else:
                                     raise Exception("No streaming content received")
                             else:

@@ -67,6 +67,11 @@ const ModelName = styled.span`
   font-weight: 600;
 `;
 
+const ModelMetrics = styled.span`
+  font-size: 11px;
+  color: #5F7281;
+`;
+
 const MessageFooter = styled.div`
   display: flex;
   flex-direction: column;
@@ -440,10 +445,17 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
         <ModelName data-testid="model-name">
           {message.model || 'Databricks LLM'}
         </ModelName>
+        
       </ModelInfo>
       
       <BotMessageContent data-testid="bot-message-content">
         <ReactMarkdown>{message.content}</ReactMarkdown>
+        {message.metrics && (
+          <ModelMetrics>
+            {message.metrics.timeToFirstToken && `${message.metrics.timeToFirstToken.toFixed(2)}s to first token + `}
+            {message.metrics.totalTime && `${message.metrics.totalTime.toFixed(2)}s`}
+          </ModelMetrics>
+        )}
         {renderSources()}
         <MessageFooter>
           <MessageActions data-testid="message-actions">
