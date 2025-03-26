@@ -9,12 +9,13 @@ from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 import os
 from dotenv import load_dotenv
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import httpx
 from databricks.sdk.service.serving import EndpointStateReady
 from fastapi import Query
 import requests
+import backoff
 load_dotenv(override=True)
 
 app = FastAPI(title="Databricks Chat API")
@@ -36,6 +37,12 @@ client = WorkspaceClient(host=f"https://{os.getenv("DATABRICKS_HOST")}", token=o
 
 # Constants
 SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
+
+# Cache to track streaming support for endpoints
+streaming_support_cache = {
+    'last_updated': datetime.now(),
+    'endpoints': {}  # Format: {'endpoint_name': {'supports_streaming': bool, 'last_checked': datetime}}
+}
 
 # Models
 class MessageRequest(BaseModel):
@@ -67,6 +74,50 @@ chats_db = {}
 async def root():
     return {"message": "Databricks Chat API is running"}
 
+# Add this function to check and update cache
+async def check_endpoint_streaming(model: str) -> bool:
+    current_time = datetime.now()
+    cache_entry = streaming_support_cache['endpoints'].get(model)
+    
+    # If cache entry exists and is less than 24 hours old, use cached value
+    if cache_entry and (current_time - cache_entry['last_checked']) < timedelta(days=1):
+        return cache_entry['supports_streaming']
+    
+    # Update cache entry
+    streaming_support_cache['endpoints'][model] = {
+        'supports_streaming': True,  # Default to False
+        'last_checked': current_time
+    }
+    return True
+
+# Add this function before the chat endpoint
+@backoff.on_exception(
+    backoff.expo,
+    (httpx.HTTPError, Exception),
+    max_tries=3,
+    max_time=30
+)
+async def make_databricks_request(client: httpx.AsyncClient, url: str, headers: dict, data: dict):
+    return await client.post(url, headers=headers, json=data)
+
+async def extract_sources_from_trace(data: dict) -> list:
+    """Extract sources from the Databricks API trace data."""
+    sources = []
+    if "databricks_output" in data and "trace" in data["databricks_output"]:
+        trace = data["databricks_output"]["trace"]
+        if "data" in trace and "spans" in trace["data"]:
+            for span in trace["data"]["spans"]:
+                if span.get("name") == "VectorStoreRetriever":
+                    retriever_output = json.loads(span["attributes"].get("mlflow.spanOutputs", "[]"))
+                    sources = [
+                        {
+                            "page_content": doc["page_content"],
+                            "metadata": doc["metadata"]
+                        } 
+                        for doc in retriever_output
+                    ]
+    return sources
+
 @app.post("/api/chat")
 async def chat(message: MessageRequest, model: str = Query(...)):
     try:
@@ -74,63 +125,109 @@ async def chat(message: MessageRequest, model: str = Query(...)):
             "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
             "Content-Type": "application/json"
         }
+
         async def generate():
             async with httpx.AsyncClient() as client:
-                try:
-                    # First try with streaming
-                    async with client.stream('POST', 
+                supports_streaming = await check_endpoint_streaming(model)
+                
+                if not supports_streaming:
+                    # Direct non-streaming request
+                    print("non Streaming is running")
+                    response = await make_databricks_request(
+                        client,
                         f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
                         headers=headers,
-                        json={
+                        data={
                             "messages": [{"role": "user", "content": message.content}],
-                            "stream": True
-                        }
-                    ) as response:
-                        if response.status_code == 200:
-                            has_content = False
-                            async for line in response.aiter_lines():
-                                if line.startswith('data: '):
-                                    try:
-                                        json_str = line[6:]
-                                        data = json.loads(json_str)
-                                        if 'choices' in data and len(data['choices']) > 0:
-                                            delta = data['choices'][0].get('delta', {})
-                                            content = delta.get('content', '')
-                                            if content:
-                                                has_content = True
-                                                yield f"data: {json.dumps({'content': content})}\n\n"
-                                    except json.JSONDecodeError:
-                                        continue
-                            
-                            # If we reached the end without getting any content, fall back to non-streaming
-                            if not has_content:
-                                raise Exception("No streaming content received")
-
-                        else:
-                            raise Exception("Streaming not supported")
-
-                except Exception as e:
-                    print(f"Falling back to non-streaming: {str(e)}")
-                    # Fallback to non-streaming request
-                    response = await client.post(
-                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
-                        headers=headers,
-                        json={
-                            "messages": [{"role": "user", "content": message.content}]
+                            "databricks_options": {"return_trace": True}
                         }
                     )
                     
                     if response.status_code == 200:
                         data = response.json()
+                        sources = await extract_sources_from_trace(data)
+                        
                         if 'choices' in data and len(data['choices']) > 0:
                             content = data['choices'][0]['message']['content']
-                            # Send the full content
-                            yield f"data: {json.dumps({'content': content})}\n\n"
-                            # Send done event
+                            yield f"data: {json.dumps({'content': content, 'sources': sources})}\n\n"
                             yield "event: done\ndata: {}\n\n"
-                    else:
-                        raise HTTPException(status_code=response.status_code, 
-                                         detail="Error calling Databricks API")
+                else:
+                    try:
+                        print("streaming is running")
+                        async with client.stream('POST', 
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            headers=headers,
+                            json={
+                                "messages": [{"role": "user", "content": message.content}],
+                                "stream": True,
+                                "databricks_options": {"return_trace": True}
+                            },
+                            timeout=30.0  # Add explicit timeout
+                        ) as response:
+                            if response.status_code == 200:
+                                has_content = False
+                                sources = []
+                                
+                                async for line in response.aiter_lines():
+                                    if line.startswith('data: '):
+                                        try:
+                                            json_str = line[6:]
+                                            data = json.loads(json_str)
+                                            
+                                            # Extract sources from trace data
+                                            sources = await extract_sources_from_trace(data)
+                                            
+                                            if 'choices' in data and len(data['choices']) > 0:
+                                                delta = data['choices'][0].get('delta', {})
+                                                content = delta.get('content', '')
+                                                
+                                                response_data = {
+                                                    'content': content if content else None,
+                                                    'sources': sources if sources else None
+                                                }
+                                                if content or sources:
+                                                    has_content = True
+                                                    yield f"data: {json.dumps(response_data)}\n\n"
+                                        except json.JSONDecodeError:
+                                            continue
+
+                                if has_content:
+                                    # Update cache to indicate streaming support
+                                    streaming_support_cache['endpoints'][model] = {
+                                        'supports_streaming': True,
+                                        'last_checked': datetime.now()
+                                    }
+                                else:
+                                    raise Exception("No streaming content received")
+                            else:
+                                raise Exception("Streaming not supported")
+
+                    except (Exception, httpx.ReadTimeout, httpx.HTTPError) as e:  # Explicitly catch timeout
+                        print(f"Streaming failed with error: {str(e)}, falling back to non-streaming")
+                        # Update cache to indicate no streaming support
+                        streaming_support_cache['endpoints'][model] = {
+                            'supports_streaming': False,
+                            'last_checked': datetime.now()
+                        }
+                        # Fall back to non-streaming request
+                        response = await make_databricks_request(
+                            client,
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            headers=headers,
+                            data={
+                                "messages": [{"role": "user", "content": message.content}],
+                                "databricks_options": {"return_trace": True}
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            sources = await extract_sources_from_trace(data)
+                        
+                            if 'choices' in data and len(data['choices']) > 0:
+                                content = data['choices'][0]['message']['content']
+                                yield f"data: {json.dumps({'content': content, 'sources': sources})}\n\n"
+                                yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
             generate(),
@@ -164,23 +261,6 @@ async def get_chat_history():
     
     return ChatHistoryResponse(chats=chats)
 
-@app.post("/api/chats", response_model=ChatHistoryItem)
-async def create_chat(chat_request: CreateChatRequest):
-    chat_id = str(uuid.uuid4())
-    
-    # Create a new chat
-    chats_db[chat_id] = {
-        "id": chat_id,
-        "title": chat_request.title,
-        "messages": [],
-        "created_at": datetime.now().isoformat()
-    }
-    
-    return ChatHistoryItem(
-        id=chat_id,
-        title=chat_request.title,
-        messages=[]
-    )
 
 @app.get("/api/chats/{chat_id}", response_model=ChatHistoryItem)
 async def get_chat(chat_id: str):
@@ -247,9 +327,9 @@ async def list_endpoints():
         serving_endpoints = []
         endpoints = client.serving_endpoints.list()
         for endpoint in endpoints:
-            if endpoint.state.ready == EndpointStateReady.READY and endpoint.task in ["llm/v1/chat"]:
+            if endpoint.state.ready == EndpointStateReady.READY:
                 serving_endpoints.append(endpoint.name)
-        return ServingEndpoint(names=serving_endpoints)
+        return ServingEndpoint(names=sorted(serving_endpoints))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching endpoints: {str(e)}")
     

@@ -6,7 +6,7 @@ const API_URL = 'http://localhost:8000/api';
 export const sendMessage = async (
   content: string, 
   model: string,
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: { content?: string, sources?: any[] }) => void
 ): Promise<void> => {
   try {
     const response = await fetch(`${API_URL}/chat?model=${model}`, {
@@ -40,9 +40,7 @@ export const sendMessage = async (
           if (jsonStr) {
             try {
               const data = JSON.parse(jsonStr);
-              if (data.content) {
-                onChunk(data.content);
-              }
+              onChunk(data);
             } catch (e) {
               console.error('Error parsing JSON:', e);
             }

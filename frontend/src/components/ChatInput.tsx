@@ -156,21 +156,23 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating 
   useEffect(() => {
     const loadEndpoints = async () => {
       try {
-        const endpointList = await fetchServingEndpoints();
-        const options = endpointList.names.map(name => ({
-          value: name,
-          label: name
-        }));
-        setEndpoints(options);
-        if (options.length > 0) {
-          setSelectedModel(options[0].value);
+        if (!selectedModel) {
+          const endpointList = await fetchServingEndpoints();
+          const options = endpointList.names.map(name => ({
+            value: name,
+            label: name
+          }));
+          setEndpoints(options);
+          if (options.length > 0) {
+            setSelectedModel(options[0].value);
+          }
         }
-      } catch (error) {
-        console.error('Failed to load endpoints:', error);
-      }
+        } catch (error) {
+          console.error('Failed to load endpoints:', error);
+        }
     };
     loadEndpoints();
-  }, []);
+  }, [setSelectedModel]);
   
   useEffect(() => {
     if (textareaRef.current) {

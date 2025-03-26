@@ -58,7 +58,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       id: uuid(),
       content, 
       role: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
+      model: model
     };
 
     const thinkingMessage: Message = {
@@ -66,44 +67,52 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       content: '',
       role: 'assistant',
       timestamp: new Date(),
-      isThinking: true
+      isThinking: true,
+      model: model
     };
 
     let chatToUse: Chat;
-    let updatedMessages: Message[];
 
     if (!currentChat) {
+      // For new chat, initialize with just the user message
       chatToUse = {
         id: uuid(),
         sessionId: currentSessionId || uuid(),
         firstQuery: content,
-        messages: [userMessage, thinkingMessage],
+        messages: [userMessage], // Don't include thinking message in chat history
         timestamp: new Date(),
-        isActive: true
+        isActive: true,
       };
       
       setCurrentChat(chatToUse);
       setChats(prev => [chatToUse, ...prev]);
-      updatedMessages = [userMessage, thinkingMessage];
     } else {
       chatToUse = currentChat;
-      updatedMessages = [...messages, userMessage, thinkingMessage];
     }
     
-    setMessages(updatedMessages);
+    // Update display messages with both user message and thinking indicator
+    setMessages(prev => [...prev, userMessage, thinkingMessage]);
     setLoading(true);
     
     try {
       let accumulatedContent = '';
+      let messageSources: any[] | null = null;
       
       await apiSendMessage(content, model, (chunk) => {
-        accumulatedContent += chunk;
+        if (chunk.content) {
+          accumulatedContent += chunk.content;
+        }
+        if (chunk.sources) {
+          messageSources = chunk.sources;
+        }
         
+        // Update only the display messages
         setMessages(prev => prev.map(msg => 
           msg.id === thinkingMessage.id 
             ? { 
                 ...msg, 
                 content: accumulatedContent,
+                sources: messageSources, // Update sources only when we have them
                 isThinking: false,
               }
             : msg
@@ -117,37 +126,46 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         role: 'assistant',
         timestamp: new Date(),
         isThinking: false,
-        model: model
+        model: model,
+        sources: messageSources
       };
 
+      // Update display messages
       setMessages(prev => prev.map(msg => 
         msg.id === thinkingMessage.id ? botMessage : msg
       ));
 
+      // Update chat history
       setChats(prev => prev.map(chat => 
-        chat.id === chatToUse.id
-          ? { ...chat, messages: messages.map(msg => 
-              msg.id === thinkingMessage.id ? botMessage : msg
-            ) }
+        chat.sessionId === chatToUse.sessionId
+          ? {
+              ...chat,
+              messages: messages.map(msg => 
+                msg.id === thinkingMessage.id ? botMessage : msg
+              )
+            }
           : chat
       ));
-
     } catch (error) {
       const errorMessage: Message = { 
         id: thinkingMessage.id,
         content: 'Sorry, I encountered an error. Please try again.', 
         role: 'assistant',
-        timestamp: new Date()
+        timestamp: new Date(),
+        model: model
       };
 
       setMessages(prev => prev.map(msg => 
         msg.id === thinkingMessage.id ? errorMessage : msg
       ));
 
+      // Update chat history with error message
       setChats(prev => prev.map(chat => 
-        chat.id === chatToUse.id
-          ? { ...chat, messages: messages.map(msg => 
-              msg.id === thinkingMessage.id ? errorMessage : msg
+        chat.sessionId === chatToUse.sessionId
+          ? { 
+            ...chat, 
+            messages: messages.map(msg => 
+                msg.id === thinkingMessage.id ? errorMessage : msg
             ) }
           : chat
       ));

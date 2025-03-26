@@ -5,6 +5,7 @@ export interface Message {
   timestamp?: Date;
   isThinking?: boolean;
   model?: string;
+  sources?: any[] | null;
 }
 
 export interface Chat {

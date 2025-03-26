@@ -1,16 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
 import copyIconUrl from '../assets/images/copy_icon.svg';
 import refreshIconUrl from '../assets/images/sync_icon.svg';
 import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
 import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
-import sourceIconUrl from '../assets/images/source_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import downIconUrl from '../assets/images/down_icon.svg';
 import { Message } from '../types';
 import { useChat } from '../context/ChatContext';
-
+import sourceIconUrl from '../assets/images/source_icon.svg';
 const MessageContainer = styled.div<{ isUser: boolean }>`
   display: flex;
   flex-direction: column;
@@ -143,6 +142,75 @@ const ThumbsDownButton = styled(ActionButton)<{ active: boolean }>`
   
 `;
 
+const SourcesSection = styled.div`
+  margin-top: 16px;
+  width: 100%;
+`;
+
+const SourceContent = styled.div`
+  width: 100%;
+  padding: 32px;
+  background: #F5F5F5;
+  box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  outline: 1px #D1D9E1 solid;
+  outline-offset: -1px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+`;
+
+const SourceItem = styled.div`
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const SourceIconContainer = styled.div`
+  height: 32px;
+  min-width: 32px;
+  background: rgba(0, 0, 59, 0.05);
+  border-radius: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+`;
+
+const SourceIcon = styled.div`
+  background-image: url(${sourceIconUrl});
+  background-size: 16px;
+  background-repeat: no-repeat;
+  background-position: center;
+  width: 16px;
+  height: 16px;
+`;
+
+const SourceTextContent = styled.div`
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  display: flex;
+`;
+
+const SourceText = styled.div`
+  color: #11171C;
+  font-size: 12px;
+  line-height: 1.5;
+  width: 100%;
+`;
+
+const SourceMetadata = styled.div`
+  color: #5F7281;
+  font-size: 11px;
+  line-height: 1.4;
+  width: 100%;
+`;
+
 const SourcesButton = styled.button`
   background: none;
   border: none;
@@ -155,22 +223,83 @@ const SourcesButton = styled.button`
   padding: 4px 8px;
   border: 1px solid #E0E0E0;
   border-radius: 4px;
-  background-image: url(${downIconUrl});
-  background-size: 14px;
-  background-repeat: no-repeat;
-  background-position: right 4px center;
   padding-right: 24px;
+  position: relative;
   
   &:hover {
     background-color: rgba(34, 114, 180, 0.08);
     border: 1px solid #2272B4;
     color: #0E538B;
   }
+
+  &::after {
+    content: "";
+    position: absolute;
+    right: 4px;
+    width: 14px;
+    height: 14px;
+    background-image: url(${downIconUrl});
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
 `;
 
-const SourcesRow = styled.div`
+const SourceCardsContainer = styled.div`
+  width: 100%;
+  overflow-x: auto;
   display: flex;
   gap: 8px;
+  margin-top: 8px;
+  padding-bottom: 4px;
+  
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+`;
+
+const SourcePreviewCard = styled.div`
+  min-width: 200px;
+  max-width: 200px;
+  padding: 16px;
+  background: white;
+  box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  outline: 1px #D1D9E1 solid;
+  outline-offset: -1px;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 8px;
+  display: flex;
+  cursor: pointer;
+
+  &:hover {
+    outline: 1px #2272B4 solid;
+    background: rgba(34, 114, 180, 0.08);
+  }
+`;
+
+const SourcePreviewItem = styled.div`
+  width: 100%;
+  height: 100%;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 16px;
+  display: flex;
+`;
+
+const PreviewText = styled.div`
+  color: #11171C;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  width: 100%;
 `;
 
 const ThinkingIndicator = styled.div`
@@ -210,6 +339,8 @@ interface ChatMessageProps {
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const { copyMessage, regenerateMessage, rateMessage, messageRatings } = useChat();
   const isUser = message.role === 'user';
+  const [showSources, setShowSources] = useState(false);
+  const [selectedSource, setSelectedSource] = useState<number | null>(null);
   
   const currentRating = messageRatings[message.id];
 
@@ -228,7 +359,53 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const handleThumbsDown = () => {
     rateMessage(message.id, 'down');
   };
-  
+
+  const renderSources = () => {
+    if (!message.sources?.length) return null;
+
+    return (
+      <SourcesSection data-testid="sources-section">
+        {selectedSource !== null ? (
+          <>
+            <SourcesButton onClick={() => setSelectedSource(null)}>
+              Back to Sources
+            </SourcesButton>
+            <SourceContent data-testid="source-content">
+              <SourceItem data-testid="source-item">
+                <SourceTextContent data-testid="source-text-content">
+                  <SourceText data-testid="source-text">{message.sources[selectedSource].page_content}</SourceText>
+                  {message.sources[selectedSource].metadata?.url && (
+                    <SourceMetadata data-testid="source-metadata">{message.sources[selectedSource].metadata.url}</SourceMetadata>
+                  )}
+                </SourceTextContent>
+              </SourceItem>
+            </SourceContent>
+          </>
+        ) : (
+          <>
+            <SourcesButton onClick={() => setShowSources(!showSources)}>
+              Sources
+            </SourcesButton>
+            <SourceCardsContainer data-testid="source-cards-container">
+              {message.sources.map((source, index) => (
+                <SourcePreviewCard key={index} onClick={() => setSelectedSource(index)} data-testid="source-preview-card">
+                  <SourcePreviewItem data-testid="source-preview-item">
+                    <SourceIconContainer data-testid="source-icon-container">
+                      <SourceIcon />
+                    </SourceIconContainer>
+                    <PreviewText data-testid="preview-text">
+                      {source.page_content}
+                    </PreviewText>
+                  </SourcePreviewItem>
+                </SourcePreviewCard>
+              ))}
+            </SourceCardsContainer>
+          </>
+        )}
+      </SourcesSection>
+    );
+  };
+
   if (isUser) {
     return (
       <MessageContainer isUser={true} data-testid="user-message-container">
@@ -267,10 +444,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       
       <BotMessageContent data-testid="bot-message-content">
         <ReactMarkdown>{message.content}</ReactMarkdown>
+        {renderSources()}
         <MessageFooter>
-          <SourcesRow>
-            <SourcesButton>Sources</SourcesButton>
-          </SourcesRow>
           <MessageActions data-testid="message-actions">
             <CopyButton 
               onClick={handleCopy} 
