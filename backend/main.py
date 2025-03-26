@@ -165,7 +165,7 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                             headers=headers,
                             json={
                                 "messages": [{"role": "user", "content": message.content}],
-                                # "stream": True,
+                                "stream": True,
                                 "databricks_options": {"return_trace": True}
                             },
                             timeout=30.0

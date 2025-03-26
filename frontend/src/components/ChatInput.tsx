@@ -212,7 +212,7 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating 
             onChange={(option) => setSelectedModel(option?.value || '')}
             options={endpoints}
             isDisabled={loading}
-            isSearchable={false}
+            isSearchable={true}
             menuPlacement="auto"
           />
         </StyledSelect>
