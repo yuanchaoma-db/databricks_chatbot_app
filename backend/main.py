@@ -134,6 +134,7 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                 if not supports_streaming:
                     # Direct non-streaming request
                     print("non Streaming is running")
+                    start_time = time.time()
                     response = await make_databricks_request(
                         client,
                         f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
@@ -143,14 +144,15 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                             "databricks_options": {"return_trace": True}
                         }
                     )
-                    
+                    end_time = time.time()
+                    total_time = end_time - start_time
                     if response.status_code == 200:
                         data = response.json()
                         sources = await extract_sources_from_trace(data)
                         
                         if 'choices' in data and len(data['choices']) > 0:
                             content = data['choices'][0]['message']['content']
-                            yield f"data: {json.dumps({'content': content, 'sources': sources})}\n\n"
+                            yield f"data: {json.dumps({'content': content, 'sources': sources, 'metrics': {'totalTime': total_time}})}\n\n"
                             yield "event: done\ndata: {}\n\n"
                 else:
                     try:
@@ -163,7 +165,7 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                             headers=headers,
                             json={
                                 "messages": [{"role": "user", "content": message.content}],
-                                "stream": True,
+                                # "stream": True,
                                 "databricks_options": {"return_trace": True}
                             },
                             timeout=30.0
@@ -224,6 +226,7 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                             'last_checked': datetime.now()
                         }
                         # Fall back to non-streaming request
+                        start_time = time.time()
                         response = await make_databricks_request(
                             client,
                             f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
@@ -233,14 +236,15 @@ async def chat(message: MessageRequest, model: str = Query(...)):
                                 "databricks_options": {"return_trace": True}
                             }
                         )
-                        
+                        end_time = time.time()
+                        total_time = end_time - start_time
                         if response.status_code == 200:
                             data = response.json()
                             sources = await extract_sources_from_trace(data)
                         
                             if 'choices' in data and len(data['choices']) > 0:
                                 content = data['choices'][0]['message']['content']
-                                yield f"data: {json.dumps({'content': content, 'sources': sources})}\n\n"
+                                yield f"data: {json.dumps({'content': content, 'sources': sources, 'metrics': {'totalTime': total_time}})}\n\n"
                                 yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
