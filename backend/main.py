@@ -299,27 +299,32 @@ async def chat(
         )
 
         async def generate():
-            timeout = httpx.Timeout(
+            streaming_timeout = httpx.Timeout(
+                connect=8.0,  # More time to establish connection
+                read=30.0,    # More time to read streaming responses
+                write=8.0,
+                pool=8.0
+            )
+            regular_timeout = httpx.Timeout(
                 connect=5.0,
                 read=30.0,
                 write=5.0,
                 pool=5.0
             )
+            supports_streaming, supports_trace = await check_endpoint_capabilities(model)
+            request_data = {
+                "messages": [{"role": "user", "content": message.content}],
+            }
+            if supports_trace:
+                request_data["databricks_options"] = {"return_trace": True}
 
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                supports_streaming, supports_trace = await check_endpoint_capabilities(model)
-                request_data = {
-                    "messages": [{"role": "user", "content": message.content}],
-                }
-                if supports_trace:
-                    request_data["databricks_options"] = {"return_trace": True}
-
-                if not supports_streaming:
+            if not supports_streaming:
+                async with httpx.AsyncClient(timeout=regular_timeout) as regular_client:
                     try:
                         logger.info("non Streaming is running")
                         start_time = time.time()
                         response = await make_databricks_request(
-                            client,
+                            regular_client,
                             f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
                             headers=headers,
                             data=request_data
@@ -376,7 +381,8 @@ async def chat(
                         save_message_to_session(session_id, assistant_message)
                         yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Failed to process response from model', 'metrics': {'totalTime': time.time() - start_time}})}\n\n"
                         yield "event: done\ndata: {}\n\n"
-                else:
+            else:
+                async with httpx.AsyncClient(timeout=streaming_timeout) as streaming_client:
                     try:
                         logger.info("streaming is running")
                         request_data["stream"] = True
@@ -384,11 +390,12 @@ async def chat(
                         first_token_time = None
                         accumulated_content = ""
                         sources = []
-                        async with client.stream('POST', 
+
+                        async with streaming_client.stream('POST', 
                             f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
                             headers=headers,
                             json=request_data,
-                            timeout=timeout
+                            timeout=streaming_timeout
                         ) as response:
                             if response.status_code == 200:
                                 has_content = False
@@ -457,65 +464,96 @@ async def chat(
                             'last_checked': datetime.now()
                         })
                         
-                        try:
-                            start_time = time.time()
-                            request_data["stream"] = False
-                            response = await make_databricks_request(
-                                client,
-                                f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
-                                headers=headers,
-                                data=request_data
-                            )
-                            success, response_data = await handle_databricks_response(response, start_time)
-                            if success and response_data:
-                                # Save assistant message to session
-                                assistant_message = MessageResponse(
-                                    message_id=assistant_message_id,
-                                    content=response_data["content"],
-                                    role="assistant",
-                                    model=model,
-                                    timestamp=datetime.now(),
-                                    sources=response_data.get("sources"),
-                                    metrics=response_data.get("metrics")
-                                )
-                                save_message_to_session(session_id, assistant_message)
+                        # Force a delay before fallback to ensure previous connection is terminated
+                        await asyncio.sleep(0.5)
+                        
+                        # Use a fresh timeout for the fallback
+                        fallback_timeout = httpx.Timeout(
+                            connect=10.0,
+                            read=60.0,
+                            write=10.0,
+                            pool=10.0
+                        )
+                        
+                        # Only for this fallback request, create a transport with connection pooling disabled
+                        # This won't affect your other normal connections
+                        fallback_transport = httpx.AsyncHTTPTransport(
+                            retries=3,
+                            limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
+                        )
+                        
+                        async with httpx.AsyncClient(
+                            timeout=fallback_timeout,
+                            transport=fallback_transport  # Use the special transport only for fallback
+                        ) as fallback_client:
+                            try:
+                                # Reset start time for fallback
+                                start_time = time.time()
+                                # Ensure stream is set to False
+                                request_data["stream"] = False
+                                # Add a random query parameter to avoid any caching
+                                url = f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations?nocache={uuid.uuid4()}"
+                                logger.info(f"Making fallback request with fresh connection to {url}")
                                 
-                                yield f"data: {json.dumps(response_data)}\n\n"
-                                yield "event: done\ndata: {}\n\n"
-                            else:
-                                logger.error("Failed to process Databricks response")
-                                error_response = {
-                                    'message_id': assistant_message_id,
-                                    'content': 'Failed to process response from model',
-                                    'sources': [],
-                                    'metrics': {'totalTime': time.time() - start_time}
-                                }
+                                # Make direct request instead of using make_databricks_request
+                                response = await fallback_client.post(
+                                    url,
+                                    headers=headers,
+                                    json=request_data,
+                                    timeout=fallback_timeout
+                                )
+                                
+                                # Process the response
+                                success, response_data = await handle_databricks_response(response, start_time)
+                                if success and response_data:
+                                    # Save assistant message to session
+                                    assistant_message = MessageResponse(
+                                        message_id=assistant_message_id,
+                                        content=response_data["content"],
+                                        role="assistant",
+                                        model=model,
+                                        timestamp=datetime.now(),
+                                        sources=response_data.get("sources"),
+                                        metrics=response_data.get("metrics")
+                                    )
+                                    save_message_to_session(session_id, assistant_message)
+                                    
+                                    yield f"data: {json.dumps(response_data)}\n\n"
+                                    yield "event: done\ndata: {}\n\n"
+                                else:
+                                    logger.error("Failed to process Databricks response")
+                                    error_response = {
+                                        'message_id': assistant_message_id,
+                                        'content': 'Failed to process response from model',
+                                        'sources': [],
+                                        'metrics': {'totalTime': time.time() - start_time}
+                                    }
+                                    assistant_message = MessageResponse(
+                                        message_id=assistant_message_id,
+                                        content=error_response["content"],
+                                        role="assistant",
+                                        model=model,
+                                        timestamp=datetime.now(),
+                                        sources=error_response.get("sources"),
+                                        metrics=error_response.get("metrics")
+                                    )
+                                    save_message_to_session(session_id, assistant_message)
+                                    yield f"data: {json.dumps(error_response)}\n\n"
+                                    yield "event: done\ndata: {}\n\n"
+                            except httpx.ReadTimeout as timeout_error:
+                                logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
                                 assistant_message = MessageResponse(
-                                    message_id=assistant_message_id,
-                                    content=error_response["content"],
-                                    role="assistant",
-                                    model=model,
-                                    timestamp=datetime.now(),
-                                    sources=error_response.get("sources"),
-                                    metrics=error_response.get("metrics")
-                                )
+                                        message_id=assistant_message_id,
+                                        content="Request timed out. Please try again later.",
+                                        role="assistant",
+                                        model=model,
+                                        timestamp=datetime.now(),
+                                        sources=[],
+                                        metrics={"totalTime": time.time() - start_time}
+                                    )
                                 save_message_to_session(session_id, assistant_message)
-                                yield f"data: {json.dumps(error_response)}\n\n"
+                                yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Request timed out. Please try again later.'})}\n\n"
                                 yield "event: done\ndata: {}\n\n"
-                        except httpx.ReadTimeout as timeout_error:
-                            logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
-                            assistant_message = MessageResponse(
-                                    message_id=assistant_message_id,
-                                    content="Request timed out. Please try again later.",
-                                    role="assistant",
-                                    model=model,
-                                    timestamp=datetime.now(),
-                                    sources=[],
-                                    metrics={"totalTime": time.time() - start_time}
-                                )
-                            save_message_to_session(session_id, assistant_message)
-                            yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Request timed out. Please try again later.'})}\n\n"
-                            yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
             generate(),
@@ -765,31 +803,39 @@ async def regenerate_message(
                             yield "event: done\ndata: {}\n\n"
                 else:
                     # Non-streaming case
-                    response = await make_databricks_request(
-                        client,
-                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
-                        headers=headers,
-                        data=request_data
+                    regen_transport = httpx.AsyncHTTPTransport(
+                        retries=3,
+                        limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
                     )
+                    async with httpx.AsyncClient(
+                        timeout=timeout,
+                        transport=regen_transport
+                    ) as client:
+                        response = await client.post(
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            headers=headers,
+                            json=request_data,
+                            timeout=timeout
+                        )
                     
-                    success, response_data = await handle_databricks_response(response, start_time)
-                    if success and response_data:
-                        total_time = time.time() - start_time
-                        messages[message_index] = {
-                            "message_id": request.message_id,
-                            "content": response_data["content"],
-                            "role": "assistant",
-                            "model": model,
-                            "timestamp": datetime.now().isoformat(),
-                            "sources": response_data.get("sources", []),
-                            "metrics": {
-                                "totalTime": total_time
+                        success, response_data = await handle_databricks_response(response, start_time)
+                        if success and response_data:
+                            total_time = time.time() - start_time
+                            messages[message_index] = {
+                                "message_id": request.message_id,
+                                "content": response_data["content"],
+                                "role": "assistant",
+                                "model": model,
+                                "timestamp": datetime.now().isoformat(),
+                                "sources": response_data.get("sources", []),
+                                "metrics": {
+                                    "totalTime": total_time
+                                }
                             }
-                        }
-                        
-                        chats_db[session_id]["messages"] = messages
-                        yield f"data: {json.dumps({**response_data, 'message_id': request.message_id})}\n\n"
-                        yield "event: done\ndata: {}\n\n"
+                            
+                            chats_db[session_id]["messages"] = messages
+                            yield f"data: {json.dumps({**response_data, 'message_id': request.message_id})}\n\n"
+                            yield "event: done\ndata: {}\n\n"
                     
         except Exception as e:
             logger.error(f"Error in regeneration: {str(e)}")
