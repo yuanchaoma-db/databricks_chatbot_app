@@ -111,7 +111,10 @@ const Sidebar: React.FC = () => {
     };
 
     chats.forEach(chat => {
-      const chatDate = new Date(chat.timestamp);
+      let chatDate = new Date(chat.timestamp);
+      if (isNaN(chatDate.getTime())) {
+        chatDate = new Date();
+      }
       chatDate.setHours(0, 0, 0, 0);
       
       let dateCategory: string;
@@ -153,8 +156,8 @@ const Sidebar: React.FC = () => {
                 <SessionGroup key={sessionId} data-testid={`session-group-${sessionId}`}>
                   <ChatItem
                     active={currentChat?.sessionId === sessionId}
-                    onClick={() => selectChat(sessionChats[0].id)}
-                    data-testid={`chat-item-${sessionChats[0].id}`}
+                    onClick={() => selectChat(sessionChats[0].sessionId)}
+                    data-testid={`chat-item-${sessionChats[0].sessionId}`}
                   >
                     <ChatItemText>{sessionChats[0].firstQuery}</ChatItemText>
                   </ChatItem>

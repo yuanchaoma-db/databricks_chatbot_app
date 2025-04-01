@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -38,9 +38,10 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const fetchChats = async () => {
       try {
         const chatHistory = await getChatHistory();
-        setChats(chatHistory);
-        if (chatHistory.length > 0) {
-          setCurrentChat(chatHistory[0]);
+        console.log('Fetched chat history:', chatHistory); // Debug log
+        setChats(chatHistory.sessions || []);
+        if (chatHistory.sessions?.length > 0) {
+          setCurrentChat(chatHistory.sessions[0]);
         }
       } catch (error) {
         console.error('Failed to fetch chat history:', error);
@@ -54,8 +55,13 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!content.trim()) return;
     setSelectedModel(model);
 
+    // Create new session if needed
+    if (!currentSessionId) {
+      startNewSession();
+    }
+
     const userMessage: Message = { 
-      id: uuid(),
+      message_id: uuid(),
       content, 
       role: 'user',
       timestamp: new Date(),
@@ -63,7 +69,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     const thinkingMessage: Message = {
-      id: uuid(),
+      message_id: uuid(),
       content: '',
       role: 'assistant',
       timestamp: new Date(),
@@ -71,37 +77,23 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       model: model
     };
 
-    let chatToUse: Chat;
-
-    if (!currentChat) {
-      // For new chat, initialize with just the user message
-      chatToUse = {
-        id: uuid(),
-        sessionId: currentSessionId || uuid(),
-        firstQuery: content,
-        messages: [userMessage], // Don't include thinking message in chat history
-        timestamp: new Date(),
-        isActive: true,
-      };
-      
-      setCurrentChat(chatToUse);
-      setChats(prev => [chatToUse, ...prev]);
-    } else {
-      chatToUse = currentChat;
-    }
-    
-    // Update display messages with both user message and thinking indicator
+    // Update local state for immediate feedback
     setMessages(prev => [...prev, userMessage, thinkingMessage]);
     setLoading(true);
-    
+    const startTime = Date.now();
     try {
       let accumulatedContent = '';
       let messageSources: any[] | null = null;
       let messageMetrics: { timeToFirstToken?: number; totalTime?: number } | null = null;
+      let messageId = '';
+      if (!currentSessionId) {
+        throw new Error('No active session ID');
+      }
       
-      await apiSendMessage(content, model, (chunk) => {
+      // Send message to backend with session ID
+      await apiSendMessage(content, model, currentSessionId, (chunk) => {
         if (chunk.content) {
-          accumulatedContent += chunk.content;
+          accumulatedContent = chunk.content;
         }
         if (chunk.sources) {
           messageSources = chunk.sources;
@@ -109,15 +101,18 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (chunk.metrics) {
           messageMetrics = chunk.metrics;
         }
+        if (chunk.message_id) {
+          messageId = chunk.message_id;
+        }
         
         // Update only the display messages
         setMessages(prev => prev.map(msg => 
-          msg.id === thinkingMessage.id 
+          msg.message_id === thinkingMessage.message_id 
             ? { 
                 ...msg, 
-                content: accumulatedContent,
-                sources: messageSources,
-                metrics: messageMetrics,
+                content: chunk.content || '',
+                sources: chunk.sources,
+                metrics: chunk.metrics,
                 isThinking: false,
               }
             : msg
@@ -126,7 +121,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Final message update when stream is complete
       const botMessage: Message = {
-        id: thinkingMessage.id,
+        message_id: messageId,
         content: accumulatedContent,
         role: 'assistant',
         timestamp: new Date(),
@@ -138,52 +133,49 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Update display messages
       setMessages(prev => prev.map(msg => 
-        msg.id === thinkingMessage.id ? botMessage : msg
+        msg.message_id === messageId ? botMessage : msg
       ));
 
-      // Update chat history
-      setChats(prev => prev.map(chat => 
-        chat.sessionId === chatToUse.sessionId
-          ? {
-              ...chat,
-              messages: messages.map(msg => 
-                msg.id === thinkingMessage.id ? botMessage : msg
-              )
-            }
-          : chat
-      ));
+      
     } catch (error) {
       const errorMessage: Message = { 
-        id: thinkingMessage.id,
+        message_id: thinkingMessage.message_id,
         content: 'Sorry, I encountered an error. Please try again.', 
         role: 'assistant',
         timestamp: new Date(),
-        model: model
+        model: model,
+        metrics: {
+          totalTime: Date.now() - startTime
+        }
       };
 
       setMessages(prev => prev.map(msg => 
-        msg.id === thinkingMessage.id ? errorMessage : msg
+        msg.message_id === thinkingMessage.message_id ? errorMessage : msg
       ));
 
-      // Update chat history with error message
-      setChats(prev => prev.map(chat => 
-        chat.sessionId === chatToUse.sessionId
-          ? { 
-            ...chat, 
-            messages: messages.map(msg => 
-                msg.id === thinkingMessage.id ? errorMessage : msg
-            ) }
-          : chat
-      ));
+      // Post error to backend
+      if (currentSessionId) {
+        await postError(currentSessionId, errorMessage, model);
+      }
+
     } finally {
+      // After completion, fetch updated chat history
+      const historyResponse = await fetch(`${API_URL}/chats`);
+      const historyData = await historyResponse.json();
+      console.log('Fetched chat history:', historyData);
+      setChats(historyData.sessions || []);
+
       setLoading(false);
     }
   };
 
-  const selectChat = (chatId: string) => {
-    const selected = chats.find(chat => chat.id === chatId);
+  const selectChat = (sessionId: string) => {
+    
+    const selected = chats.find(chat => chat.sessionId === sessionId);
+    
     if (selected) {
       setCurrentChat(selected);
+      setCurrentSessionId(sessionId);
       
       const sessionMessages = chats
         .filter(chat => chat.sessionId === selected.sessionId)
@@ -217,7 +209,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const regenerateMessage = async (messageId: string, model: string) => {
     setSelectedModel(model);
-    const messageIndex = messages.findIndex(msg => msg.id === messageId);
+    const messageIndex = messages.findIndex(msg => msg.message_id === messageId);
     if (messageIndex === -1) return;
 
     const previousUserMessage = [...messages]
@@ -225,13 +217,14 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       .reverse()
       .find(msg => msg.role === 'user');
     
-    if (!previousUserMessage) return;
+    if (!previousUserMessage || !currentSessionId) return;
 
     setLoading(true);
+    const startTime = Date.now();
 
     // Replace with thinking indicator
     const thinkingMessage: Message = {
-      id: messageId,
+      message_id: messageId,
       content: '',
       role: 'assistant',
       timestamp: new Date(),
@@ -239,44 +232,55 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       model: model
     };
     
-    const messagesWithThinking = [...messages];
-    messagesWithThinking[messageIndex] = thinkingMessage;
-    setMessages(messagesWithThinking);
+    setMessages(prev => {
+      const updatedMessages = [...prev];
+      updatedMessages[messageIndex] = thinkingMessage;
+      return updatedMessages;
+    });
 
     try {
-      let accumulatedContent = '';
       let messageSources: any[] | null = null;
-      let messageMetrics: { timeToFirstToken?: number; totalTime?: number } | null = null;
+      let messageMetrics: {
+        timeToFirstToken?: number;
+        totalTime?: number;
+      } | null = null;
+      let accumulatedContent = '';
       
-      await apiSendMessage(previousUserMessage.content, model, (chunk) => {
-        if (chunk.content) {
-          accumulatedContent += chunk.content;
+      await apiRegenerateMessage(
+        previousUserMessage.content,
+        model,
+        currentSessionId,
+        messageId,
+        (chunk) => {
+          if (chunk.content) {
+            accumulatedContent = chunk.content;
+            setMessages(prev => {
+              const updatedMessages = [...prev];
+              const currentMessage = updatedMessages[messageIndex];
+              updatedMessages[messageIndex] = {
+                ...currentMessage,
+                message_id: messageId,
+                content: accumulatedContent,
+                sources: chunk.sources || messageSources,
+                metrics: chunk.metrics || messageMetrics,
+                isThinking: false,
+                model: model
+              };
+              return updatedMessages;
+            });
+          }
+          if (chunk.sources) {
+            messageSources = chunk.sources;
+          }
+          if (chunk.metrics) {
+            messageMetrics = chunk.metrics;
+          }
         }
-        if (chunk.sources) {
-          messageSources = chunk.sources;
-        }
-        if (chunk.metrics) {
-          messageMetrics = chunk.metrics;
-        }
-        
-        // Update the thinking message with accumulated content
-        setMessages(prev => {
-          const updatedMessages = [...prev];
-          updatedMessages[messageIndex] = {
-            ...thinkingMessage,
-            content: accumulatedContent,
-            sources: messageSources,
-            metrics: messageMetrics,
-            isThinking: false,
-            model: model
-          };
-          return updatedMessages;
-        });
-      });
+      );
 
       // Final message update when stream is complete
-      const botMessage: Message = {
-        id: messageId,
+      const finalMessage: Message = {
+        message_id: messageId,
         content: accumulatedContent,
         role: 'assistant',
         timestamp: new Date(),
@@ -286,35 +290,44 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         metrics: messageMetrics
       };
 
-      setMessages(prev => {
-        const updatedMessages = [...prev];
-        updatedMessages[messageIndex] = botMessage;
-        return updatedMessages;
-      });
-
-      setChats(prev => prev.map(chat => 
-        chat.sessionId === currentChat?.sessionId
-          ? { ...chat, messages: messages.map(msg => 
-              msg.id === messageId ? botMessage : msg
-            ) }
-          : chat
+      setMessages(prev => prev.map(msg => 
+        msg.message_id === messageId ? finalMessage : msg
       ));
 
     } catch (error) {
+      console.error('Error regenerating message:', error);
       const errorMessage: Message = { 
-        id: messageId,
-        content: 'Sorry, I encountered an error. Please try again.', 
+        message_id: messageId,
+        content: error instanceof Error && error.message === 'HTTP error! status: 429' 
+          ? 'The service is currently experiencing high demand. Please wait a moment and try again.'
+          : 'Sorry, I encountered an error while regenerating the message. Please try again.', 
         role: 'assistant',
         timestamp: new Date(),
-        model: model
+        model: model,
+        isThinking: false,
+        metrics: {
+          totalTime: Date.now() - startTime
+        }
       };
       
       setMessages(prev => {
         const updatedMessages = [...prev];
-        updatedMessages[messageIndex] = errorMessage;
+        const messageIndex = updatedMessages.findIndex(msg => msg.message_id === messageId);
+        if (messageIndex !== -1) {
+          updatedMessages[messageIndex] = errorMessage;
+        }
         return updatedMessages;
       });
+
+      if (currentSessionId && messageId) {
+        await postRegenerateError(currentSessionId, messageId, errorMessage, model);
+      }
     } finally {
+
+      const historyResponse = await fetch(`${API_URL}/chats`);
+      const historyData = await historyResponse.json();
+      console.log('Fetched chat history:', historyData);
+      setChats(historyData.sessions || []);
       setLoading(false);
     }
   };

@@ -129,7 +129,7 @@ const ChatArea: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
   
-  
+  console.log(`ChatArea Messages====>: ${messages}`);
   useEffect(() => {
     if (messagesEndRef.current && !isRegenerating) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });

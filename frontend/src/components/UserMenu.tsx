@@ -104,9 +104,9 @@ const UserMenu: React.FC = () => {
 
   return (
     <>
-      <LogoContainer>
-        <LogoIcon src={databricksLogo} alt="Databricks Logo" />
-        <LogoText src={databricksText} alt="Databricks" />
+      <LogoContainer data-testid="logo-container">
+        <LogoIcon src={databricksLogo} alt="Databricks Logo" data-testid="logo-icon"/>
+        <LogoText src={databricksText} alt="Databricks" data-testid="logo-text"/>
       </LogoContainer>
       <UserMenuContainer ref={menuRef}>
       <Avatar onClick={() => setIsOpen(!isOpen)}>S</Avatar>

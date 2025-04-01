@@ -346,23 +346,23 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const isUser = message.role === 'user';
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
-  
-  const currentRating = messageRatings[message.id];
+  console.log(`Message Inside ChatMessage=====>: ${message.content.slice(0, 10)} ${message.message_id}`);
+  const currentRating = messageRatings[message.message_id];
 
   const handleCopy = () => {
     copyMessage(message.content);
   };
 
   const handleRegenerate = async () => {
-    await onRegenerate(message.id);
+    await onRegenerate(message.message_id);
   };
 
   const handleThumbsUp = () => {
-    rateMessage(message.id, 'up');
+    rateMessage(message.message_id, 'up');
   };
 
   const handleThumbsDown = () => {
-    rateMessage(message.id, 'down');
+    rateMessage(message.message_id, 'down');
   };
 
   const renderSources = () => {
@@ -462,24 +462,24 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
             <CopyButton 
               onClick={handleCopy} 
               title="Copy" 
-              data-testid={`copy-button-${message.id}`}
+              data-testid={`copy-button-${message.message_id}`}
             />
             <RefreshButton 
               onClick={handleRegenerate} 
               title="Regenerate" 
-              data-testid={`refresh-button-${message.id}`}
+              data-testid={`refresh-button-${message.message_id}`}
             />
             <ThumbsUpButton 
               onClick={handleThumbsUp} 
               title="Thumbs Up" 
               active={currentRating === 'up'}
-              data-testid={`thumbs-up-button-${message.id}`}
+              data-testid={`thumbs-up-button-${message.message_id}`}
             />
             <ThumbsDownButton 
               onClick={handleThumbsDown} 
               title="Thumbs Down" 
               active={currentRating === 'down'}
-              data-testid={`thumbs-down-button-${message.id}`}
+              data-testid={`thumbs-down-button-${message.message_id}`}
             />
           </MessageActions>
         </MessageFooter>

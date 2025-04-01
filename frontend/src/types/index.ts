@@ -1,22 +1,23 @@
+export interface MessageMetrics {
+  timeToFirstToken?: number;
+  totalTime?: number;
+}
+
 export interface Message {
-  id: string;
+  message_id: string;
   content: string;
   role: 'user' | 'assistant';
-  timestamp?: Date;
+  timestamp: Date;
   isThinking?: boolean;
   model?: string;
   sources?: any[] | null;
-  metrics?: {
-    timeToFirstToken?: number;
-    totalTime?: number;
-  } | null;
+  metrics?: MessageMetrics | null;
 }
 
 export interface Chat {
-  id: string;
   sessionId: string;
   firstQuery: string;
-  messages: Message[];
+  messages: Message[];    
   timestamp: Date;
   isActive?: boolean;
 }

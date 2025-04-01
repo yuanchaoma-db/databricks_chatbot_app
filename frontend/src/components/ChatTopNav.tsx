@@ -6,12 +6,12 @@ const TopNav = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 8px 16px;
 `;
 
 const ChatTopNav: React.FC = () => {
   return (
-    <TopNav>
+    <TopNav data-testid="chat-top-nav">
       <UserMenu />
     </TopNav>
   );
