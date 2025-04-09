@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
 import databricksLogo from '../assets/images/databricks_icon.svg';
 import databricksText from '../assets/images/databricks_text.svg';
+import { fetchUserInfo } from '../api/chatApi';
 
 const UserMenuContainer = styled.div`
   position: relative;
@@ -78,13 +79,12 @@ const LogoText = styled.img`
   margin-left: 4px;
 `;
 
-
-    
-
 const UserMenu: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { logout } = useChat();
+  const [username, setUsername] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -95,6 +95,20 @@ const UserMenu: React.FC = () => {
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const getUserInfo = async () => {
+      try {
+        const userInfo = await fetchUserInfo();
+        setUsername(userInfo.username);
+        setUserEmail(userInfo.email);
+      } catch (error) {
+        console.error('Failed to fetch user info:', error);
+      }
+    };
+
+    getUserInfo();
   }, []);
 
   const handleLogout = () => {
@@ -109,16 +123,16 @@ const UserMenu: React.FC = () => {
         <LogoText src={databricksText} alt="Databricks" data-testid="logo-text"/>
       </LogoContainer>
       <UserMenuContainer ref={menuRef}>
-      <Avatar onClick={() => setIsOpen(!isOpen)}>S</Avatar>
-      <MenuDropdown isOpen={isOpen}>
-        <UserInfo>
-          Scottie Pippen<br />
-          scottie.pippen@zeiss.com
-        </UserInfo>
-        <MenuItem onClick={() => setIsOpen(false)}>Send feedback</MenuItem>
-        <MenuItem onClick={handleLogout}>Log out</MenuItem>
-      </MenuDropdown>
-    </UserMenuContainer>
+        <Avatar onClick={() => setIsOpen(!isOpen)}>{username ? username.charAt(0).toUpperCase() : 'U'}</Avatar>
+        <MenuDropdown isOpen={isOpen}>
+          <UserInfo>
+            {username ? username : 'Loading...'}<br />
+            {userEmail ? userEmail : 'Loading...'}
+          </UserInfo>
+          <MenuItem onClick={() => setIsOpen(false)}>Send feedback</MenuItem>
+          <MenuItem onClick={handleLogout}>Log out</MenuItem>
+        </MenuDropdown>
+      </UserMenuContainer>
     </>
   );
 };

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -465,7 +465,7 @@ async def chat(
                         })
                         
                         # Force a delay before fallback to ensure previous connection is terminated
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(1)
                         
                         # Use a fresh timeout for the fallback
                         fallback_timeout = httpx.Timeout(
@@ -909,6 +909,29 @@ async def regenerate_error(
     chats_db[session_id]["messages"] = messages
     
     return {"status": "error saved"}
+
+# Example endpoint for user login or session initialization
+@app.post("/api/login")
+async def login(request: Request):
+    # Extract user information from headers
+    headers = request.headers
+    email = headers.get("X-Forwarded-Email")
+    username = headers.get("X-Forwarded-Preferred-Username")
+    user = headers.get("X-Forwarded-User")
+    ip = headers.get("X-Real-Ip")
+    user_access_token = headers.get("X-Forwarded-Access-Token")
+
+    # Store user information in session or database
+    user_info = {
+        "email": email,
+        "username": username,
+        "user": user,
+        "ip": ip,
+        "user_access_token": user_access_token
+    }
+
+    # Example response
+    return {"message": "User logged in", "user_info": user_info}
 
 if __name__ == "__main__":
     import uvicorn

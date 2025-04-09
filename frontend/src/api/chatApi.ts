@@ -243,3 +243,17 @@ export const postRegenerateError = async (
     console.error('Error posting regenerate error message:', error);
   }
 };
+
+export const fetchUserInfo = async (): Promise<{ username: string; email: string }> => {
+  try {
+    const response = await fetch(`${API_URL}/login`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.user_info;
+  } catch (error) {
+    console.error('Error fetching user info:', error);
+    throw error;
+  }
+};
