@@ -125,7 +125,7 @@ const MessagesContainer = styled.div`
 `;
 
 const ChatArea: React.FC = () => {
-  const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage,selectedModel } = useChat();
+  const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
   
@@ -139,13 +139,12 @@ const ChatArea: React.FC = () => {
   const hasMessages = messages.length > 0;
   
   const handleSuggestionClick = (suggestion: string) => {
-    console.log(`Selected Model suggestion ====: ${selectedModel}`);
-    sendMessage(suggestion, selectedModel);
+    sendMessage(suggestion);
   };
   
   const handleRegenerate = async (messageId: string) => {
     setIsRegenerating(true);
-    await regenerateMessage(messageId,selectedModel);
+    await regenerateMessage(messageId);
   };
   
   return (

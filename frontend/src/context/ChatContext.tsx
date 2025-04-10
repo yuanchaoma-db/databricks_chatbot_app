@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -8,18 +8,17 @@ interface ChatContextType {
   chats: Chat[];
   messages: Message[];
   loading: boolean;
-  sendMessage: (content: string, model: string) => Promise<void>;
+  model: string;
+  sendMessage: (content: string) => Promise<void>;
   selectChat: (chatId: string) => void;
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   startNewSession: () => void;
   copyMessage: (content: string) => void;
-  regenerateMessage: (messageId: string, model: string) => Promise<void>;
+  regenerateMessage: (messageId: string) => Promise<void>;
   rateMessage: (messageId: string, rating: 'up' | 'down') => void;
   messageRatings: {[messageId: string]: 'up' | 'down'};
   logout: () => void;
-  selectedModel: string;
-  setSelectedModel: (model: string) => void;
 }
  
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -32,8 +31,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
-  const [selectedModel, setSelectedModel] = useState<string>('');
-
+  const [model, setModel] = useState<string>('');
   useEffect(() => {
     const fetchChats = async () => {
       try {
@@ -47,13 +45,20 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.error('Failed to fetch chat history:', error);
       }
     };
-
+    const fetchModel = async () => {
+      try {
+        const model = await getModel();
+        setModel(model);
+      } catch (error) {
+        console.error('Failed to fetch model:', error);
+      }
+    };
     fetchChats();
+    fetchModel();
   }, []);
 
-  const sendMessage = async (content: string, model: string) => {
+  const sendMessage = async (content: string) => {
     if (!content.trim()) return;
-    setSelectedModel(model);
 
     // Create new session if needed
     if (!currentSessionId) {
@@ -64,8 +69,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       message_id: uuid(),
       content, 
       role: 'user',
-      timestamp: new Date(),
-      model: model
+      timestamp: new Date()
     };
 
     const thinkingMessage: Message = {
@@ -73,8 +77,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       content: '',
       role: 'assistant',
       timestamp: new Date(),
-      isThinking: true,
-      model: model
+      isThinking: true
     };
 
     // Update local state for immediate feedback
@@ -86,12 +89,13 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       let messageSources: any[] | null = null;
       let messageMetrics: { timeToFirstToken?: number; totalTime?: number } | null = null;
       let messageId = '';
+      
       if (!currentSessionId) {
         throw new Error('No active session ID');
       }
       
       // Send message to backend with session ID
-      await apiSendMessage(content, model, currentSessionId, (chunk) => {
+      await apiSendMessage(content, currentSessionId, (chunk) => {
         if (chunk.content) {
           accumulatedContent = chunk.content;
         }
@@ -104,7 +108,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         if (chunk.message_id) {
           messageId = chunk.message_id;
         }
-        
+    
         // Update only the display messages
         setMessages(prev => prev.map(msg => 
           msg.message_id === thinkingMessage.message_id 
@@ -114,6 +118,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 sources: chunk.sources,
                 metrics: chunk.metrics,
                 isThinking: false,
+                model: model
               }
             : msg
         ));
@@ -135,7 +140,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setMessages(prev => prev.map(msg => 
         msg.message_id === messageId ? botMessage : msg
       ));
-
       
     } catch (error) {
       const errorMessage: Message = { 
@@ -143,10 +147,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         content: 'Sorry, I encountered an error. Please try again.', 
         role: 'assistant',
         timestamp: new Date(),
-        model: model,
-        metrics: {
-          totalTime: Date.now() - startTime
-        }
+        model: '',
+        metrics: null
       };
 
       setMessages(prev => prev.map(msg => 
@@ -155,7 +157,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Post error to backend
       if (currentSessionId) {
-        await postError(currentSessionId, errorMessage, model);
+        await postError(currentSessionId, errorMessage);
       }
 
     } finally {
@@ -207,8 +209,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
   };
 
-  const regenerateMessage = async (messageId: string, model: string) => {
-    setSelectedModel(model);
+  const regenerateMessage = async (messageId: string) => {
     const messageIndex = messages.findIndex(msg => msg.message_id === messageId);
     if (messageIndex === -1) return;
 
@@ -248,7 +249,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       await apiRegenerateMessage(
         previousUserMessage.content,
-        model,
         currentSessionId,
         messageId,
         (chunk) => {
@@ -305,9 +305,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         timestamp: new Date(),
         model: model,
         isThinking: false,
-        metrics: {
-          totalTime: Date.now() - startTime
-        }
+        metrics: null
       };
       
       setMessages(prev => {
@@ -320,7 +318,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
 
       if (currentSessionId && messageId) {
-        await postRegenerateError(currentSessionId, messageId, errorMessage, model);
+        await postRegenerateError(currentSessionId, messageId, errorMessage);
       }
     } finally {
 
@@ -361,14 +359,13 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       chats,
       messages,
       loading,
+      model,
       sendMessage,
       selectChat,
       isSidebarOpen,
       toggleSidebar,
       startNewSession,
       copyMessage,
-      selectedModel,
-      setSelectedModel,
       regenerateMessage,
       rateMessage,
       messageRatings,

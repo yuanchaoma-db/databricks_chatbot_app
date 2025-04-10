@@ -1,12 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
-import atIconUrl from '../assets/images/at_icon.svg';
-import clipIconUrl from '../assets/images/clip_icon.svg';
 import sendIconUrl from '../assets/images/send_icon.svg';
-import { fetchServingEndpoints } from '../api/chatApi';
-import type { ServingEndpoint } from '../types';
-import Select from 'react-select';
 
 interface InputContainerProps {
   'data-testid'?: string;
@@ -50,15 +45,6 @@ const TextArea = styled.textarea`
   box-sizing: border-box;
 `;
 
-const ButtonsLeft = styled.div`
-  display: flex;
-  align-items: center;
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  z-index: 2;
-`;
-
 const ButtonsRight = styled.div`
   display: flex;
   align-items: center;
@@ -96,52 +82,6 @@ const SendButton = styled(InputButton)`
   }
 `;
 
-
-interface OptionType {
-  value: string;
-  label: string;
-}
-
-const StyledSelect = styled.div`
-  width: 200px;
-  
-  .select-container {
-    font-size: 11px;
-    
-    .select__control {
-      border: 1px solid #C0CDD8;
-      border-radius: 6px;
-      background-color: white;
-      min-height: 32px;
-      height: 32px;
-    }
-
-    .select__value-container {
-      padding: 0 8px;
-      height: 30px;
-    }
-
-    .select__indicators {
-      height: 30px;
-    }
-
-    .select__menu {
-      font-size: 11px;
-      border: 1px solid #C0CDD8;
-    }
-
-    .select__option {
-      padding: 4px 8px;
-      &:hover {
-        background-color: #F0F0F0;
-      }
-      &--is-selected {
-        background-color: #2272B4;
-      }
-    }
-  }
-`;
-
 interface ChatInputProps {
   fixed?: boolean;
   setIsRegenerating: (value: boolean) => void;
@@ -149,30 +89,8 @@ interface ChatInputProps {
 
 const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating }) => {
   const [inputValue, setInputValue] = useState('');
-  const [endpoints, setEndpoints] = useState<OptionType[]>([]);
-  const { sendMessage, loading, selectedModel, setSelectedModel } = useChat();
+  const { sendMessage, loading } = useChat();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  
-  useEffect(() => {
-    const loadEndpoints = async () => {
-      try {
-        if (!selectedModel) {
-          const endpointList = await fetchServingEndpoints();
-          const options = endpointList.names.map(name => ({
-            value: name,
-            label: name
-          }));
-          setEndpoints(options);
-          if (options.length > 0) {
-            setSelectedModel(options[0].value);
-          }
-        }
-        } catch (error) {
-          console.error('Failed to load endpoints:', error);
-        }
-    };
-    loadEndpoints();
-  }, [setSelectedModel]);
   
   useEffect(() => {
     if (textareaRef.current) {
@@ -183,10 +101,9 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating 
   }, [inputValue]);
   
   const handleSubmit = async () => {
-    console.log(`Selected Model====: ${selectedModel}`);
     if (inputValue.trim() && !loading) {
       setIsRegenerating(false);
-      await sendMessage(inputValue, selectedModel);
+      await sendMessage(inputValue);
       setInputValue('');
       if (textareaRef.current) {
         textareaRef.current.style.height = '50px';
@@ -203,20 +120,6 @@ const ChatInput: React.FC<ChatInputProps> = ({ fixed = false, setIsRegenerating 
   
   return (
     <InputContainer data-testid="chat-input-container">
-      <ButtonsLeft data-testid="buttons-left">
-        <StyledSelect>
-          <Select
-            className="select-container"
-            classNamePrefix="select"
-            value={endpoints.find(opt => opt.value === selectedModel)}
-            onChange={(option) => setSelectedModel(option?.value || '')}
-            options={endpoints}
-            isDisabled={loading}
-            isSearchable={true}
-            menuPlacement="auto"
-          />
-        </StyledSelect>
-      </ButtonsLeft>
       <TextArea
         ref={textareaRef}
         value={inputValue}

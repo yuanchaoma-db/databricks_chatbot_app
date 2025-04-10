@@ -20,8 +20,4 @@ export interface Chat {
   messages: Message[];    
   timestamp: Date;
   isActive?: boolean;
-}
-
-export interface ServingEndpoint {
-  names: string[];
 } 

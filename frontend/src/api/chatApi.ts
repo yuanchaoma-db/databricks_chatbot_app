@@ -1,11 +1,9 @@
-import axios from 'axios';
-import { Message, Chat, ServingEndpoint } from '../types';
+import { Message, Chat } from '../types';
 
-export const API_URL = 'http://localhost:8000/api';
+export const API_URL = '/chat-api';
 
 export const sendMessage = async (
   content: string, 
-  model: string,
   sessionId: string,
   onChunk: (chunk: { 
     message_id: string,
@@ -14,19 +12,20 @@ export const sendMessage = async (
     metrics?: {
       timeToFirstToken?: number;
       totalTime?: number;
-    }
+    },
+    model?: string
   }) => void
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/chat?model=${model}&session_id=${sessionId}`, 
+      `${API_URL}/chat?session_id=${sessionId}`, 
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
         },
-        body: JSON.stringify({ content, model })
+        body: JSON.stringify({ content })
       }
     );
 
@@ -90,28 +89,27 @@ export const getChatHistory = async (): Promise<{ sessions: Chat[] }> => {
     return { sessions: [] };
   }
 };
-
-export const fetchServingEndpoints = async (): Promise<ServingEndpoint> => {
+export const getModel = async (): Promise<string> => {
   try {
-    const response = await fetch(`${API_URL}/serving-endpoints`);
+    const response = await fetch(`${API_URL}/model`);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    return await response.json();
+    const data = await response.json();
+    return data.model;
   } catch (error) {
-    console.error('Error fetching endpoints:', error);
-    throw error;
+    console.error('Error fetching model:', error);
+    return '';
   }
 };
 
 export const postError = async (
   sessionId: string,
   errorMessage: Message,
-  model: string
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/error?model=${model}&session_id=${sessionId}`,
+      `${API_URL}/error?session_id=${sessionId}`,
       {
         method: 'POST',
         headers: {
@@ -121,7 +119,6 @@ export const postError = async (
           message_id: errorMessage.message_id,
           content: errorMessage.content,
           role: errorMessage.role,
-          model: model,
           timestamp: errorMessage.timestamp,
           sources: errorMessage.sources,
           metrics: errorMessage.metrics
@@ -139,7 +136,6 @@ export const postError = async (
 
 export const regenerateMessage = async (
   content: string,
-  model: string,
   sessionId: string,
   messageId: string,
   onChunk: (chunk: {
@@ -153,7 +149,7 @@ export const regenerateMessage = async (
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/regenerate?model=${model}&session_id=${sessionId}`,
+      `${API_URL}/regenerate?session_id=${sessionId}`,
       {
         method: 'POST',
         headers: {
@@ -214,11 +210,10 @@ export const postRegenerateError = async (
   sessionId: string,
   messageId: string,
   errorMessage: Message,
-  model: string
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/regenerate/error?model=${model}&session_id=${sessionId}`,
+      `${API_URL}/regenerate/error?session_id=${sessionId}`,
       {
         method: 'POST',
         headers: {
@@ -228,7 +223,6 @@ export const postRegenerateError = async (
           message_id: messageId,
           content: errorMessage.content,
           role: errorMessage.role,
-          model: model,
           timestamp: errorMessage.timestamp,
           sources: errorMessage.sources,
           metrics: errorMessage.metrics
@@ -251,6 +245,7 @@ export const fetchUserInfo = async (): Promise<{ username: string; email: string
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
+    console.log('data--->', data);
     return data.user_info;
   } catch (error) {
     console.error('Error fetching user info:', error);

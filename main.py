@@ -18,30 +18,82 @@ import backoff
 import time  # Add this import at the top
 import logging
 import asyncio
+import threading
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
-app = FastAPI(title="Databricks Chat API")
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React app URL
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Mount static files directory
-# app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Initialize Databricks workspace client
-client = WorkspaceClient(host=f"https://{os.getenv("DATABRICKS_HOST")}", token=os.getenv("DATABRICKS_TOKEN"))
+app = FastAPI()
+ui_app = StaticFiles(directory="frontend/build", html=True)
+api_app = FastAPI()
+app.mount("/chat-api", api_app)
+app.mount("/", ui_app)
 
 # Constants
 SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
 
+class TokenMinter:
+    """
+    A class to handle OAuth token generation and renewal for Databricks.
+    Automatically refreshes the token before it expires.
+    """
+    def __init__(self, client_id: str, client_secret: str, host: str):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.host = host
+        self.token = None
+        self.expiry_time = None
+        self.lock = threading.Lock()
+        self._refresh_token()
+        
+    def _refresh_token(self) -> None:
+        """Internal method to refresh the OAuth token"""
+        url = f"https://{self.host}/oidc/v1/token"
+        auth = (self.client_id, self.client_secret)
+        data = {'grant_type': 'client_credentials', 'scope': 'all-apis'}
+        
+        try:
+            response = requests.post(url, auth=auth, data=data)
+            response.raise_for_status()
+            token_data = response.json()
+            
+            with self.lock:
+                self.token = token_data.get('access_token')
+                # Set expiry time to 55 minutes (slightly less than the 60-minute expiry)
+                self.expiry_time = datetime.now() + timedelta(minutes=55)
+                
+            logger.info("Successfully refreshed Databricks OAuth token")
+        except Exception as e:
+            logger.error(f"Failed to refresh Databricks OAuth token: {str(e)}")
+            raise
+    
+    def get_token(self) -> str:
+        """
+        Get a valid token, refreshing if necessary.
+        
+        Returns:
+            str: The current valid OAuth token
+        """
+        with self.lock:
+            # Check if token is expired or about to expire (within 5 minutes)
+            if not self.token or not self.expiry_time or datetime.now() + timedelta(minutes=5) >= self.expiry_time:
+                self._refresh_token()
+            return self.token
+
+
+DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
+CLIENT_ID = os.environ.get("DATABRICKS_CLIENT_ID")
+CLIENT_SECRET = os.environ.get("DATABRICKS_CLIENT_SECRET")
+
+# Initialize token minter
+token_minter = TokenMinter(
+    client_id=CLIENT_ID,
+    client_secret=CLIENT_SECRET,
+    host=DATABRICKS_HOST
+)
+
+# Initialize Databricks workspace client
+client = WorkspaceClient()
 # Cache to track streaming support for endpoints
 streaming_support_cache = {
     'last_updated': datetime.now(),
@@ -75,8 +127,6 @@ class ChatHistoryResponse(BaseModel):
 class CreateChatRequest(BaseModel):
     title: str
 
-class ServingEndpoint(BaseModel):
-    names: List[str]
 
 class ErrorRequest(BaseModel):
     message_id: str
@@ -94,8 +144,13 @@ class RegenerateRequest(BaseModel):
 # In-memory storage for chats (in a production app, use a database)
 chats_db = {}
 
+# Dependency to get auth headers
+async def get_auth_headers() -> dict:
+    token = token_minter.get_token()
+    return {"Authorization": f"Bearer {token}"}
+
 # Routes
-@app.get("/")
+@api_app.get("/")
 async def root():
     return {"message": "Databricks Chat API is running"}
 
@@ -218,12 +273,10 @@ async def handle_databricks_response(
         response_data = {
             'content': error_data.get('error_code', 'Encountered an error') + ". " + error_data.get('message', 'Error processing response.'),
             'sources': [],
-            'metrics': {'totalTime': total_time}
+            'metrics': None
         }
         return True, response_data
     
-    # For other non-200 responses or invalid responses, return False to trigger fallback
-    return False, None
 
 # Add these new functions to handle chat sessions
 def save_message_to_session(
@@ -247,10 +300,9 @@ def save_message_to_session(
     if is_first_message:
         chats_db[session_id]["first_query"] = message.content
 
-@app.post("/api/error")
+@api_app.post("/error")
 async def error(
     error: ErrorRequest,
-    model: str = Query(...),
     session_id: str = Query(...)
 ):
     # Create error message response
@@ -258,7 +310,7 @@ async def error(
         message_id=error.message_id,
         content=error.content,
         role=error.role,
-        model=error.model,
+        model=SERVING_ENDPOINT_NAME,
         timestamp=error.timestamp,
         sources=error.sources,
         metrics=error.metrics
@@ -268,19 +320,18 @@ async def error(
     save_message_to_session(session_id, error_message)
     return {"status": "error saved"}
 
+@api_app.get("/model")
+async def get_model():
+    return {"model": SERVING_ENDPOINT_NAME}
+
 # Modify the chat endpoint to handle sessions
-@app.post("/api/chat")
+@api_app.post("/chat")
 async def chat(
     message: MessageRequest, 
-    model: str = Query(...),
-    session_id: str = Query(...)
+    session_id: str = Query(...),
+    headers: dict = Depends(get_auth_headers)
 ):
     try:
-        headers = {
-            "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
-            "Content-Type": "application/json"
-        }
-
         # Generate assistant message ID once at the start
         assistant_message_id = str(uuid.uuid4())
 
@@ -289,7 +340,7 @@ async def chat(
             message_id=str(uuid.uuid4()),
             content=message.content,
             role="user",
-            model=model,
+            model=SERVING_ENDPOINT_NAME,
             timestamp=datetime.now()
         )
         save_message_to_session(
@@ -311,7 +362,7 @@ async def chat(
                 write=5.0,
                 pool=5.0
             )
-            supports_streaming, supports_trace = await check_endpoint_capabilities(model)
+            supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
             request_data = {
                 "messages": [{"role": "user", "content": message.content}],
             }
@@ -325,7 +376,7 @@ async def chat(
                         start_time = time.time()
                         response = await make_databricks_request(
                             regular_client,
-                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
                             headers=headers,
                             data=request_data
                         )
@@ -336,7 +387,7 @@ async def chat(
                                 message_id=assistant_message_id,
                                 content=response_data["content"],
                                 role="assistant",
-                                model=model,
+                                model=SERVING_ENDPOINT_NAME,
                                 timestamp=datetime.now(),
                                 sources=response_data.get("sources"),
                                 metrics=response_data.get("metrics")
@@ -352,14 +403,14 @@ async def chat(
                                 'message_id': assistant_message_id,
                                 'content': 'Failed to process response from model',
                                 'sources': [],
-                                'metrics': {'totalTime': time.time() - start_time}
+                                'metrics': None
                             }
                             
                             assistant_message = MessageResponse(
                                 message_id=assistant_message_id,
                                 content=error_response["content"],
                                 role="assistant",
-                                model=model,
+                                model=SERVING_ENDPOINT_NAME,
                                 timestamp=datetime.now(),
                                 sources=error_response.get("sources"),
                                 metrics=error_response.get("metrics")
@@ -373,13 +424,13 @@ async def chat(
                             message_id=assistant_message_id,
                             content="Request timed out. Please try again later.",
                             role="assistant",
-                            model=model,
+                            model=SERVING_ENDPOINT_NAME,
                             timestamp=datetime.now(),
                             sources=[],
-                            metrics={"totalTime": time.time() - start_time}
+                            metrics=None
                         )
                         save_message_to_session(session_id, assistant_message)
-                        yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Failed to process response from model', 'metrics': {'totalTime': time.time() - start_time}})}\n\n"
+                        yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Failed to process response from model', 'metrics': None})}\n\n"
                         yield "event: done\ndata: {}\n\n"
             else:
                 async with httpx.AsyncClient(timeout=streaming_timeout) as streaming_client:
@@ -392,7 +443,7 @@ async def chat(
                         sources = []
 
                         async with streaming_client.stream('POST', 
-                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
                             headers=headers,
                             json=request_data,
                             timeout=streaming_timeout
@@ -439,7 +490,7 @@ async def chat(
                                         message_id=assistant_message_id,  # Use the same ID here
                                         content=accumulated_content,
                                         role="assistant",
-                                        model=model,
+                                        model=SERVING_ENDPOINT_NAME,
                                         timestamp=datetime.now(),
                                         sources=sources,
                                         metrics={'timeToFirstToken': ttft, 'totalTime': time.time() - start_time}
@@ -447,7 +498,7 @@ async def chat(
                                     save_message_to_session(session_id, assistant_message)
                                     
                                     # Update cache to indicate streaming support
-                                    streaming_support_cache['endpoints'][model] = {
+                                    streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME] = {
                                         'supports_streaming': True,
                                         'supports_trace': supports_trace,
                                         'last_checked': datetime.now()
@@ -459,10 +510,11 @@ async def chat(
 
                     except (httpx.ReadTimeout, httpx.HTTPError, Exception) as e:
                         logger.error(f"Streaming failed with error: {str(e)}, falling back to non-streaming")
-                        streaming_support_cache['endpoints'][model].update({
-                            'supports_streaming': False,
-                            'last_checked': datetime.now()
-                        })
+                        if SERVING_ENDPOINT_NAME in streaming_support_cache['endpoints']:
+                            streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME].update({
+                                'supports_streaming': False,
+                                'last_checked': datetime.now()
+                            })
                         
                         # Force a delay before fallback to ensure previous connection is terminated
                         await asyncio.sleep(1)
@@ -492,7 +544,7 @@ async def chat(
                                 # Ensure stream is set to False
                                 request_data["stream"] = False
                                 # Add a random query parameter to avoid any caching
-                                url = f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations?nocache={uuid.uuid4()}"
+                                url = f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations?nocache={uuid.uuid4()}"
                                 logger.info(f"Making fallback request with fresh connection to {url}")
                                 
                                 # Make direct request instead of using make_databricks_request
@@ -511,7 +563,7 @@ async def chat(
                                         message_id=assistant_message_id,
                                         content=response_data["content"],
                                         role="assistant",
-                                        model=model,
+                                        model=SERVING_ENDPOINT_NAME,
                                         timestamp=datetime.now(),
                                         sources=response_data.get("sources"),
                                         metrics=response_data.get("metrics")
@@ -526,13 +578,13 @@ async def chat(
                                         'message_id': assistant_message_id,
                                         'content': 'Failed to process response from model',
                                         'sources': [],
-                                        'metrics': {'totalTime': time.time() - start_time}
+                                        'metrics': None
                                     }
                                     assistant_message = MessageResponse(
                                         message_id=assistant_message_id,
                                         content=error_response["content"],
                                         role="assistant",
-                                        model=model,
+                                        model=SERVING_ENDPOINT_NAME,
                                         timestamp=datetime.now(),
                                         sources=error_response.get("sources"),
                                         metrics=error_response.get("metrics")
@@ -546,7 +598,7 @@ async def chat(
                                         message_id=assistant_message_id,
                                         content="Request timed out. Please try again later.",
                                         role="assistant",
-                                        model=model,
+                                        model=SERVING_ENDPOINT_NAME,
                                         timestamp=datetime.now(),
                                         sources=[],
                                         metrics={"totalTime": time.time() - start_time}
@@ -576,7 +628,7 @@ async def chat(
             'message_id': assistant_message_id,
             'content': error_message,
             'sources': [],
-            'metrics': {'totalTime': time.time() - start_time},
+            'metrics': None,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -584,7 +636,7 @@ async def chat(
             message_id=assistant_message_id,
             content=error_response["content"],
             role="assistant",
-            model=model,
+            model=SERVING_ENDPOINT_NAME,
             timestamp=datetime.now(),
             sources=error_response.get("sources"),
             metrics=error_response.get("metrics")
@@ -604,7 +656,7 @@ async def chat(
             }
         )
 
-@app.get("/api/chats", response_model=ChatHistoryResponse)
+@api_app.get("/chats", response_model=ChatHistoryResponse)
 async def get_chat_history():
     sessions = [
         ChatHistoryItem(
@@ -635,7 +687,7 @@ async def get_chat_history():
     return ChatHistoryResponse(sessions=sessions)
 
 
-@app.get("/api/chats/{session_id}", response_model=ChatHistoryItem)
+@api_app.get("/chats/{session_id}", response_model=ChatHistoryItem)
 async def get_chat(session_id: str):
     if session_id not in chats_db:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -663,57 +715,29 @@ async def get_chat(session_id: str):
     )
 
         
-@app.get("/api/serving-endpoints")
-async def list_endpoints():
-    try:
-        serving_endpoints = []
-        endpoints = client.serving_endpoints.list()
-        for endpoint in endpoints:
-            if endpoint.state.ready == EndpointStateReady.READY:
-                # Check if endpoint has a feedback entity
-                supports_trace = any(
-                    entity.name == 'feedback'
-                    for entity in endpoint.config.served_entities
-                )
-                
-                # Update the cache with the endpoint's capabilities
-                streaming_support_cache['endpoints'][endpoint.name] = {
-                    'supports_streaming': True,
-                    'supports_trace': supports_trace,
-                    'last_checked': datetime.now()
-                }
-                
-                serving_endpoints.append(endpoint.name)
-                
-        return ServingEndpoint(names=sorted(serving_endpoints))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching endpoints: {str(e)}")
 
 # Add endpoint to get session messages
-@app.get("/api/sessions/{session_id}/messages")
+@api_app.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str):
     if session_id not in chats_db:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"messages": chats_db[session_id]["messages"]}
 
-@app.post("/api/regenerate")
+@api_app.post("/regenerate")
 async def regenerate_message(
     request: RegenerateRequest,
-    model: str = Query(...),
-    session_id: str = Query(...)
+    session_id: str = Query(...),
+    headers: dict = Depends(get_auth_headers)
 ):
-    headers = {
-        "Authorization": f"Bearer {os.getenv('DATABRICKS_TOKEN')}",
-        "Content-Type": "application/json"
-    }
-    
     if session_id not in chats_db:
         logger.error(f"Session {session_id} not found in chats_db")
         raise HTTPException(
             status_code=404, 
             detail=f"Chat session {session_id} not found. Please ensure you're using a valid session ID."
         )
-    
+    print("session_id", session_id)
+    print("request.message_id", request.message_id)
+    print("chats_db", chats_db)
     chat_data = chats_db[session_id]
     messages = chat_data["messages"]
     
@@ -734,7 +758,7 @@ async def regenerate_message(
         try:
             timeout = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
-                supports_streaming, supports_trace = await check_endpoint_capabilities(model)
+                supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
                 request_data = {
                     "messages": [{"role": "user", "content": request.original_content}],
                 }
@@ -750,7 +774,7 @@ async def regenerate_message(
                     request_data["stream"] = True
                     async with client.stream(
                         'POST',
-                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
                         headers=headers,
                         json=request_data,
                         timeout=timeout
@@ -787,7 +811,7 @@ async def regenerate_message(
                                 "message_id": request.message_id,
                                 "content": accumulated_content,
                                 "role": "assistant",
-                                "model": model,
+                                "model": SERVING_ENDPOINT_NAME,
                                 "timestamp": datetime.now().isoformat(),
                                 "sources": sources,
                                 "metrics": {
@@ -812,7 +836,7 @@ async def regenerate_message(
                         transport=regen_transport
                     ) as client:
                         response = await client.post(
-                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{model}/invocations",
+                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
                             headers=headers,
                             json=request_data,
                             timeout=timeout
@@ -825,7 +849,7 @@ async def regenerate_message(
                                 "message_id": request.message_id,
                                 "content": response_data["content"],
                                 "role": "assistant",
-                                "model": model,
+                                "model": SERVING_ENDPOINT_NAME,
                                 "timestamp": datetime.now().isoformat(),
                                 "sources": response_data.get("sources", []),
                                 "metrics": {
@@ -844,7 +868,7 @@ async def regenerate_message(
                 "message_id": request.message_id,
                 "content": "Failed to regenerate response. Please try again.",
                 "sources": [],
-                "metrics": {"totalTime": total_time},
+                "metrics": None,
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -852,10 +876,10 @@ async def regenerate_message(
                 "message_id": request.message_id,
                 "content": error_response["content"],
                 "role": "assistant",
-                "model": model,
+                "model": SERVING_ENDPOINT_NAME,
                 "timestamp": error_response["timestamp"],
                 "sources": [],
-                "metrics": error_response["metrics"]
+                "metrics": None
             }
             
             chats_db[session_id]["messages"] = messages
@@ -871,11 +895,11 @@ async def regenerate_message(
         }
     )
 
-@app.post("/api/regenerate/error")
+@api_app.post("/regenerate/error")
 async def regenerate_error(
     error: ErrorRequest,
-    model: str = Query(...),
-    session_id: str = Query(...)
+    session_id: str = Query(...),
+    headers: dict = Depends(get_auth_headers)
 ):
     # Find and update the message in the chat history
     if session_id not in chats_db:
@@ -899,7 +923,7 @@ async def regenerate_error(
         "message_id": error.message_id,
         "content": error.content,
         "role": error.role,
-        "model": model,
+        "model": SERVING_ENDPOINT_NAME,
         "timestamp": error.timestamp.isoformat(),
         "sources": error.sources,
         "metrics": error.metrics
@@ -911,12 +935,12 @@ async def regenerate_error(
     return {"status": "error saved"}
 
 # Example endpoint for user login or session initialization
-@app.post("/api/login")
+@api_app.get("/login")
 async def login(request: Request):
     # Extract user information from headers
     headers = request.headers
     email = headers.get("X-Forwarded-Email")
-    username = headers.get("X-Forwarded-Preferred-Username")
+    username = headers.get("X-Forwarded-Preferred-Username").split("@")[0]
     user = headers.get("X-Forwarded-User")
     ip = headers.get("X-Real-Ip")
     user_access_token = headers.get("X-Forwarded-Access-Token")
