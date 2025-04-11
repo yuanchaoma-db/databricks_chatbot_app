@@ -24,10 +24,17 @@ logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
 app = FastAPI()
-ui_app = StaticFiles(directory="frontend/build", html=True)
+#ui_app = StaticFiles(directory="frontend/build", html=True)
 api_app = FastAPI()
 app.mount("/chat-api", api_app)
-app.mount("/", ui_app)
+# app.mount("/", ui_app)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Constants
 SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
@@ -956,6 +963,8 @@ async def login(request: Request):
 
     # Example response
     return {"message": "User logged in", "user_info": user_info}
+
+
 
 if __name__ == "__main__":
     import uvicorn

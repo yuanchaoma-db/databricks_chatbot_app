@@ -1,6 +1,8 @@
 import { Message, Chat } from '../types';
 
-export const API_URL = '/chat-api';
+// export const API_URL = '/chat-api';
+export const API_URL = 'http://localhost:8000/chat-api';
+
 
 export const sendMessage = async (
   content: string, 
@@ -252,3 +254,17 @@ export const fetchUserInfo = async (): Promise<{ username: string; email: string
     throw error;
   }
 };
+
+// export const getSessionMessages = async (sessionId: string): Promise<{ messages: Message[] }> => {
+//   try {
+//     const response = await fetch(`${API_URL}/sessions/${sessionId}/messages`);
+//     if (!response.ok) {
+//       throw new Error(`HTTP error! status: ${response.status}`);
+//     }
+//     const data = await response.json();
+//     return data.messages;
+//   } catch (error) {
+//     console.error('Error fetching session messages:', error);
+//     throw error;
+//   }
+// };

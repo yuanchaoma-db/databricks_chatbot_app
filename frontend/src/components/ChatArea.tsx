@@ -128,6 +128,13 @@ const ChatArea: React.FC = () => {
   const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
+  const [hasStartedChat, setHasStartedChat] = useState(false);
+
+  useEffect(() => {
+    if (messages?.length > 0 && !hasStartedChat) {
+      setHasStartedChat(true);
+    }
+  }, [messages]);
   
   console.log(`ChatArea Messages====>: ${messages}`);
   useEffect(() => {
@@ -136,9 +143,10 @@ const ChatArea: React.FC = () => {
     }
   }, [messages, isRegenerating]);
   
-  const hasMessages = messages.length > 0;
+  const hasMessages = messages?.length > 0 || hasStartedChat;
   
   const handleSuggestionClick = (suggestion: string) => {
+    setHasStartedChat(true);
     sendMessage(suggestion);
   };
   

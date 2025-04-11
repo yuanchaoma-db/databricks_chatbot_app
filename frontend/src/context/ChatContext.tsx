@@ -136,10 +136,10 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         metrics: messageMetrics
       };
 
-      // Update display messages
-      setMessages(prev => prev.map(msg => 
-        msg.message_id === messageId ? botMessage : msg
-      ));
+      // // Update display messages
+      setMessages(prev => prev.filter(msg => 
+        msg.message_id !== thinkingMessage.message_id 
+      ).concat(botMessage));
       
     } catch (error) {
       const errorMessage: Message = { 
@@ -162,6 +162,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     } finally {
       // After completion, fetch updated chat history
+      
       const historyResponse = await fetch(`${API_URL}/chats`);
       const historyData = await historyResponse.json();
       console.log('Fetched chat history:', historyData);
@@ -210,6 +211,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const regenerateMessage = async (messageId: string) => {
+    console.log('Regenerating message:', messages);
     const messageIndex = messages.findIndex(msg => msg.message_id === messageId);
     if (messageIndex === -1) return;
 
@@ -293,6 +295,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setMessages(prev => prev.map(msg => 
         msg.message_id === messageId ? finalMessage : msg
       ));
+     
 
     } catch (error) {
       console.error('Error regenerating message:', error);
