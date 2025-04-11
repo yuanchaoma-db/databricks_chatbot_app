@@ -141,6 +141,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         msg.message_id !== thinkingMessage.message_id 
       ).concat(botMessage));
       
+      
     } catch (error) {
       const errorMessage: Message = { 
         message_id: thinkingMessage.message_id,
@@ -212,6 +213,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const regenerateMessage = async (messageId: string) => {
     console.log('Regenerating message:', messages);
+    console.log('Current session ID:', currentSessionId);
+    
     const messageIndex = messages.findIndex(msg => msg.message_id === messageId);
     if (messageIndex === -1) return;
 
@@ -220,7 +223,31 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       .reverse()
       .find(msg => msg.role === 'user');
     
-    if (!previousUserMessage || !currentSessionId) return;
+    if (!previousUserMessage || !currentSessionId) {
+      console.error('Cannot regenerate: missing user message or session ID');
+      return;
+    }
+    
+    // Check if this session exists in our chats array
+    const sessionExists = chats.some(chat => chat.sessionId === currentSessionId);
+    if (!sessionExists) {
+      console.error('Session not found in chat history. Cannot regenerate.');
+      // Create a local error message
+      const errorMessage: Message = { 
+        message_id: messageId,
+        content: 'Sorry, the chat session was not found. Please start a new chat.',
+        role: 'assistant',
+        timestamp: new Date(),
+        model: model,
+        isThinking: false,
+        metrics: null
+      };
+      
+      setMessages(prev => prev.map(msg => 
+        msg.message_id === messageId ? errorMessage : msg
+      ));
+      return;
+    }
 
     setLoading(true);
     const startTime = Date.now();

@@ -133,8 +133,11 @@ const ChatArea: React.FC = () => {
   useEffect(() => {
     if (messages?.length > 0 && !hasStartedChat) {
       setHasStartedChat(true);
+    } else if (messages?.length === 0 && hasStartedChat) {
+      // Reset hasStartedChat when messages is cleared (new session)
+      setHasStartedChat(false);
     }
-  }, [messages]);
+  }, [messages, hasStartedChat]);
   
   console.log(`ChatArea Messages====>: ${messages}`);
   useEffect(() => {
@@ -186,9 +189,9 @@ const ChatArea: React.FC = () => {
         {hasMessages && (
           <MessagesContainer data-testid="messages-container">
             {messages.map((message, index) => (
-              <ChatMessage 
+              <ChatMessage    
                 key={index} 
-                message={message} 
+                message={message}
                 onRegenerate={handleRegenerate}
                 data-testid={`message-${index}`}
               />

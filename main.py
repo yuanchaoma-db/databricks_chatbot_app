@@ -19,6 +19,7 @@ import time  # Add this import at the top
 import logging
 import asyncio
 import threading
+import copy
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv(override=True)
@@ -27,7 +28,7 @@ app = FastAPI()
 #ui_app = StaticFiles(directory="frontend/build", html=True)
 api_app = FastAPI()
 app.mount("/chat-api", api_app)
-# app.mount("/", ui_app)
+#app.mount("/", ui_app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -736,17 +737,17 @@ async def regenerate_message(
     session_id: str = Query(...),
     headers: dict = Depends(get_auth_headers)
 ):
-    if session_id not in chats_db:
-        logger.error(f"Session {session_id} not found in chats_db")
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Chat session {session_id} not found. Please ensure you're using a valid session ID."
-        )
-    print("session_id", session_id)
-    print("request.message_id", request.message_id)
-    print("chats_db", chats_db)
-    chat_data = chats_db[session_id]
-    messages = chat_data["messages"]
+    chats_db_lock = threading.Lock()
+    with chats_db_lock:
+        if session_id not in chats_db:
+            logger.error(f"Session {session_id} not found in chats_db")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Chat session {session_id} not found. Please ensure you're using a valid session ID."
+            )
+        
+        chat_data = copy.deepcopy(chats_db[session_id])
+        messages = chat_data["messages"]
     
     message_index = next(
         (i for i, msg in enumerate(messages) 
@@ -909,11 +910,13 @@ async def regenerate_error(
     headers: dict = Depends(get_auth_headers)
 ):
     # Find and update the message in the chat history
-    if session_id not in chats_db:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    chat_data = chats_db[session_id]
-    messages = chat_data["messages"]
+    chats_db_lock = threading.Lock()
+    with chats_db_lock:
+        if session_id not in chats_db:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        chat_data = chats_db[session_id]
+        messages = chat_data["messages"]
     
     # Find the message to update
     message_index = next(
