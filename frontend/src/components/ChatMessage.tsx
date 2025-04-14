@@ -365,7 +365,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const handleCopy = async () => {
     await copyMessage(message.content);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
+    setTimeout(() => setCopied(false), 5000); // Reset after 5 seconds
   };
 
   const handleRegenerate = async () => {

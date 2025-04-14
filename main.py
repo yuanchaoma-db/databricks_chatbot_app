@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -208,6 +208,7 @@ class ChatDatabase:
                     timestamp TEXT NOT NULL,
                     sources TEXT,
                     metrics TEXT,
+                    rating TEXT CHECK(rating IN ('up', 'down', NULL)),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 )
@@ -217,6 +218,13 @@ class ChatDatabase:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)')
+                
+                # Add rating column if it doesn't exist
+                try:
+                    cursor.execute('SELECT rating FROM messages LIMIT 1')
+                except sqlite3.OperationalError:
+                    logger.info("Adding rating column to messages table")
+                    cursor.execute('ALTER TABLE messages ADD COLUMN rating TEXT CHECK(rating IN ("up", "down", NULL))')
                 
                 conn.commit()
             except sqlite3.Error as e:
@@ -466,6 +474,55 @@ class ChatDatabase:
             except sqlite3.Error as e:
                 logger.error(f"Error checking first message: {str(e)}")
                 raise
+            finally:
+                cursor.close()
+
+    def update_message_rating(self, message_id: str, rating: str | None) -> bool:
+        """Update the rating of a message"""
+        with self.db_lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            try:
+                conn.execute('BEGIN TRANSACTION')
+                
+                cursor.execute('''
+                UPDATE messages 
+                SET rating = ?
+                WHERE message_id = ?
+                ''', (rating, message_id))
+                
+                if cursor.rowcount == 0:
+                    conn.rollback()
+                    return False
+                
+                conn.commit()
+                return True
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error(f"Error updating message rating: {str(e)}")
+                return False
+            finally:
+                cursor.close()
+
+    def get_message_rating(self, message_id: str) -> str | None:
+        """Get the rating of a message"""
+        with self.db_lock:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute('''
+                SELECT rating
+                FROM messages
+                WHERE message_id = ?
+                ''', (message_id,))
+                
+                result = cursor.fetchone()
+                return result['rating'] if result else None
+            except sqlite3.Error as e:
+                logger.error(f"Error getting message rating: {str(e)}")
+                return None
             finally:
                 cursor.close()
 
@@ -1236,7 +1293,26 @@ async def login(request: Request):
     # Example response
     return {"message": "User logged in", "user_info": user_info}
 
-
+# Add new endpoint for rating messages
+@api_app.post("/messages/{message_id}/rate")
+async def rate_message(
+    message_id: str,
+    rating: str | None = Query(..., regex="^(up|down)$")
+):
+    try:
+        success = chat_db.update_message_rating(message_id, rating)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Message {message_id} not found"
+            )
+        return {"status": "success", "rating": rating}
+    except Exception as e:
+        logger.error(f"Error rating message: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while rating the message"
+        )
 
 if __name__ == "__main__":
     import uvicorn

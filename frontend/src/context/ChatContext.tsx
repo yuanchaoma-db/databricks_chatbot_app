@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel, rateMessage as apiRateMessage } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -350,14 +350,31 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const rateMessage = (messageId: string, rating: 'up' | 'down') => {
-    setMessageRatings(prev => {
-      if (prev[messageId] === rating) {
+  const rateMessage = async (messageId: string, rating: 'up' | 'down') => {
+    try {
+      // If clicking the same rating again, remove it
+      const newRating = messageRatings[messageId] === rating ? null : rating;
+      
+      // Update UI state immediately
+      setMessageRatings(prev => {
+        if (newRating === null) {
+          const { [messageId]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [messageId]: newRating };
+      });
+
+      // Send to backend
+      await apiRateMessage(messageId, newRating);
+    } catch (error) {
+      console.error('Failed to rate message:', error);
+      // Revert UI state on error
+      setMessageRatings(prev => {
         const { [messageId]: _, ...rest } = prev;
         return rest;
-      }
-      return { ...prev, [messageId]: rating };
-    });
+      });
+      setError('Failed to rate message. Please try again.');
+    }
   };
 
   const logout = () => {
