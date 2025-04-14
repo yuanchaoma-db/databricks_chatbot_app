@@ -270,9 +270,28 @@ const SourceCardsContainer = styled.div`
   margin-top: 8px;
   padding-bottom: 4px;
   
-  scrollbar-width: none;
+  /* Show scrollbar and style it */
+  scrollbar-width: thin;
+  scrollbar-color: #C0CDD8 #F5F5F5;
+  
+  /* Webkit scrollbar styles */
   &::-webkit-scrollbar {
-    display: none;
+    height: 4px;
+    display: block;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: #F5F5F5;
+    border-radius: 2px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #C0CDD8;
+    border-radius: 2px;
+    
+    &:hover {
+      background: #A0B0C0;
+    }
   }
 `;
 

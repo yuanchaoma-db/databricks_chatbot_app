@@ -25,7 +25,7 @@ interface ChatContextType {
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
-export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [currentChat, setCurrentChat] = useState<Chat | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -151,28 +151,33 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error('Error sending message:', error);
       setError('Failed to send message. Please try again.');
       
-      const errorMessage: Message = { 
-        message_id: thinkingMessage.message_id,
-        content: 'Sorry, I encountered an error. Please try again.', 
-        role: 'assistant',
-        timestamp: new Date(),
-        model: '',
-        metrics: null
-      };
-
+      // Keep the user message but update the thinking message to show error
       setMessages(prev => prev.map(msg => 
-        msg.message_id === thinkingMessage.message_id ? errorMessage : msg
+        msg.message_id === thinkingMessage.message_id 
+          ? {
+              ...msg,
+              content: 'Sorry, I encountered an error. Please try again.',
+              isThinking: false,
+              model: model
+            }
+          : msg
       ));
 
       if (currentSessionId) {
-        await postError(currentSessionId, errorMessage);
+        await postError(currentSessionId, {
+          ...thinkingMessage,
+          content: 'Sorry, I encountered an error. Please try again.',
+          isThinking: false
+        });
       }
     } finally {
       try {
         const historyResponse = await fetch(`${API_URL}/chats`);
         const historyData = await historyResponse.json();
         console.log('Fetched chat history:', historyData);
-        setChats(historyData.sessions || []);
+        if (historyData.sessions) {
+          setChats(historyData.sessions);
+        }
       } catch (error) {
         console.error('Error fetching chat history:', error);
         setError('Failed to update chat history.');

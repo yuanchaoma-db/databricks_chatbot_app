@@ -37,7 +37,8 @@ app.add_middleware(
 )
 
 # Constants
-SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME", "databricks-meta-llama-3-3-70b-instruct")
+SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME")
+assert SERVING_ENDPOINT_NAME, "SERVING_ENDPOINT_NAME is not set"
 
 class TokenMinter:
     """
@@ -615,11 +616,10 @@ async def handle_databricks_response(
     Returns (success, response_string)
     """
     total_time = time.time() - start_time
-    logger.info(f"Response status: {response.status_code}")
-    logger.info(f"Response content: {response.json()}")
 
     if response.status_code == 200:
         data = response.json()
+        print(f"Data: {data}")
         sources = await extract_sources_from_trace(data)
         logger.info(f"Sources: {sources}")
 
@@ -737,7 +737,6 @@ async def chat(
                             headers=headers,
                             data=request_data
                         )
-                        logger.info(f"Response: {response.json()}")
                         success, response_data = await handle_databricks_response(response, start_time)
                         if success and response_data:
                             assistant_message = MessageResponse(
@@ -824,6 +823,10 @@ async def chat(
                                                 delta = data['choices'][0].get('delta', {})
                                                 content = delta.get('content', '')
                                                 accumulated_content += content
+                                                
+                                                # Extract sources if this is the final message containing databricks_options
+                                                if 'databricks_options' in data:
+                                                    sources = await extract_sources_from_trace(data)
                                                 
                                                 # Include the same assistant_message_id in each chunk
                                                 response_data = {
@@ -1108,12 +1111,18 @@ async def regenerate_message(
                                                     ttft = first_token_time - start_time
 
                                                 content = data['choices'][0].get('delta', {}).get('content', '')
+                                                
+                                                # Extract sources if this is the final message containing databricks_options
+                                                if 'databricks_options' in data:
+                                                    sources = await extract_sources_from_trace(data)
+                                                
                                                 if content:
                                                     accumulated_content += content
                                                     current_time = time.time()
                                                     response_data = {
                                                         'message_id': request.message_id,
                                                         'content': content,
+                                                        'sources': sources if sources else None,
                                                         'metrics': {
                                                             'timeToFirstToken': ttft,
                                                             'totalTime': current_time - start_time
