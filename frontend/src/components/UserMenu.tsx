@@ -129,7 +129,6 @@ const UserMenu: React.FC = () => {
             {username ? username : 'Loading...'}<br />
             {userEmail ? userEmail : 'Loading...'}
           </UserInfo>
-          <MenuItem onClick={() => setIsOpen(false)}>Send feedback</MenuItem>
           <MenuItem onClick={handleLogout}>Log out</MenuItem>
         </MenuDropdown>
       </UserMenuContainer>

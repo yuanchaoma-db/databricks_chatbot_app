@@ -19,8 +19,10 @@ interface ChatContextType {
   rateMessage: (messageId: string, rating: 'up' | 'down') => void;
   messageRatings: {[messageId: string]: 'up' | 'down'};
   logout: () => void;
+  error: string | null;
+  clearError: () => void;
 }
- 
+
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -32,27 +34,35 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
   const [model, setModel] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+
+  const clearError = () => setError(null);
+
   useEffect(() => {
     const fetchChats = async () => {
       try {
         const chatHistory = await getChatHistory();
-        console.log('Fetched chat history:', chatHistory); // Debug log
+        console.log('Fetched chat history:', chatHistory);
         setChats(chatHistory.sessions || []);
         if (chatHistory.sessions?.length > 0) {
           setCurrentChat(chatHistory.sessions[0]);
         }
       } catch (error) {
         console.error('Failed to fetch chat history:', error);
+        setError('Failed to load chat history. Please try again.');
       }
     };
+
     const fetchModel = async () => {
       try {
         const model = await getModel();
         setModel(model);
       } catch (error) {
         console.error('Failed to fetch model:', error);
+        setError('Failed to load model information.');
       }
     };
+
     fetchChats();
     fetchModel();
   }, []);
@@ -80,10 +90,10 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isThinking: true
     };
 
-    // Update local state for immediate feedback
     setMessages(prev => [...prev, userMessage, thinkingMessage]);
     setLoading(true);
-    const startTime = Date.now();
+    setError(null);
+
     try {
       let accumulatedContent = '';
       let messageSources: any[] | null = null;
@@ -94,7 +104,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw new Error('No active session ID');
       }
       
-      // Send message to backend with session ID
       await apiSendMessage(content, currentSessionId, (chunk) => {
         if (chunk.content) {
           accumulatedContent = chunk.content;
@@ -109,7 +118,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           messageId = chunk.message_id;
         }
     
-        // Update only the display messages
         setMessages(prev => prev.map(msg => 
           msg.message_id === thinkingMessage.message_id 
             ? { 
@@ -124,7 +132,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ));
       });
 
-      // Final message update when stream is complete
       const botMessage: Message = {
         message_id: messageId,
         content: accumulatedContent,
@@ -136,13 +143,14 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         metrics: messageMetrics
       };
 
-      // // Update display messages
       setMessages(prev => prev.filter(msg => 
         msg.message_id !== thinkingMessage.message_id 
       ).concat(botMessage));
       
-      
     } catch (error) {
+      console.error('Error sending message:', error);
+      setError('Failed to send message. Please try again.');
+      
       const errorMessage: Message = { 
         message_id: thinkingMessage.message_id,
         content: 'Sorry, I encountered an error. Please try again.', 
@@ -156,25 +164,24 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         msg.message_id === thinkingMessage.message_id ? errorMessage : msg
       ));
 
-      // Post error to backend
       if (currentSessionId) {
         await postError(currentSessionId, errorMessage);
       }
-
     } finally {
-      // After completion, fetch updated chat history
-      
-      const historyResponse = await fetch(`${API_URL}/chats`);
-      const historyData = await historyResponse.json();
-      console.log('Fetched chat history:', historyData);
-      setChats(historyData.sessions || []);
-
+      try {
+        const historyResponse = await fetch(`${API_URL}/chats`);
+        const historyData = await historyResponse.json();
+        console.log('Fetched chat history:', historyData);
+        setChats(historyData.sessions || []);
+      } catch (error) {
+        console.error('Error fetching chat history:', error);
+        setError('Failed to update chat history.');
+      }
       setLoading(false);
     }
   };
 
   const selectChat = (sessionId: string) => {
-    
     const selected = chats.find(chat => chat.sessionId === sessionId);
     
     if (selected) {
@@ -193,7 +200,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsSidebarOpen(!isSidebarOpen);
   };
 
-
   const startNewSession = () => {
     const newSessionId = uuid();
     setCurrentSessionId(newSessionId);
@@ -208,6 +214,7 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       })
       .catch(err => {
         console.error('Failed to copy message:', err);
+        setError('Failed to copy message to clipboard.');
       });
   };
 
@@ -225,34 +232,13 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     
     if (!previousUserMessage || !currentSessionId) {
       console.error('Cannot regenerate: missing user message or session ID');
+      setError('Cannot regenerate message: missing context or session ID.');
       return;
     }
     
-    // Check if this session exists in our chats array
-    const sessionExists = chats.some(chat => chat.sessionId === currentSessionId);
-    if (!sessionExists) {
-      console.error('Session not found in chat history. Cannot regenerate.');
-      // Create a local error message
-      const errorMessage: Message = { 
-        message_id: messageId,
-        content: 'Sorry, the chat session was not found. Please start a new chat.',
-        role: 'assistant',
-        timestamp: new Date(),
-        model: model,
-        isThinking: false,
-        metrics: null
-      };
-      
-      setMessages(prev => prev.map(msg => 
-        msg.message_id === messageId ? errorMessage : msg
-      ));
-      return;
-    }
-
     setLoading(true);
-    const startTime = Date.now();
+    setError(null);
 
-    // Replace with thinking indicator
     const thinkingMessage: Message = {
       message_id: messageId,
       content: '',
@@ -307,7 +293,6 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       );
 
-      // Final message update when stream is complete
       const finalMessage: Message = {
         message_id: messageId,
         content: accumulatedContent,
@@ -322,10 +307,11 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setMessages(prev => prev.map(msg => 
         msg.message_id === messageId ? finalMessage : msg
       ));
-     
 
     } catch (error) {
       console.error('Error regenerating message:', error);
+      setError('Failed to regenerate message. Please try again.');
+      
       const errorMessage: Message = { 
         message_id: messageId,
         content: error instanceof Error && error.message === 'HTTP error! status: 429' 
@@ -351,36 +337,34 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await postRegenerateError(currentSessionId, messageId, errorMessage);
       }
     } finally {
-
-      const historyResponse = await fetch(`${API_URL}/chats`);
-      const historyData = await historyResponse.json();
-      console.log('Fetched chat history:', historyData);
-      setChats(historyData.sessions || []);
+      try {
+        const historyResponse = await fetch(`${API_URL}/chats`);
+        const historyData = await historyResponse.json();
+        console.log('Fetched chat history:', historyData);
+        setChats(historyData.sessions || []);
+      } catch (error) {
+        console.error('Error fetching chat history:', error);
+        setError('Failed to update chat history.');
+      }
       setLoading(false);
     }
   };
 
   const rateMessage = (messageId: string, rating: 'up' | 'down') => {
     setMessageRatings(prev => {
-      // If same rating is clicked again, remove the rating
       if (prev[messageId] === rating) {
         const { [messageId]: _, ...rest } = prev;
         return rest;
       }
-      // Otherwise set the new rating
       return { ...prev, [messageId]: rating };
     });
   };
 
   const logout = () => {
-    // Clear all chat data
     setMessages([]);
     setChats([]);
     setCurrentChat(null);
     setCurrentSessionId(null);
-    
-    // Add any additional logout logic here (e.g., API calls, clearing tokens)
-    // You might want to redirect to a login page or show the welcome screen
   };
 
   return (
@@ -400,6 +384,8 @@ export const ChatProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       rateMessage,
       messageRatings,
       logout,
+      error,
+      clearError
     }}>
       {children}
     </ChatContext.Provider>

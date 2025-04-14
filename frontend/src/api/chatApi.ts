@@ -20,14 +20,17 @@ export const sendMessage = async (
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/chat?session_id=${sessionId}`, 
+      `${API_URL}/chat`, 
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
         },
-        body: JSON.stringify({ content })
+        body: JSON.stringify({ 
+          content,
+          session_id: sessionId
+        })
       }
     );
 
@@ -111,13 +114,14 @@ export const postError = async (
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/error?session_id=${sessionId}`,
+      `${API_URL}/error`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          session_id: sessionId,
           message_id: errorMessage.message_id,
           content: errorMessage.content,
           role: errorMessage.role,
@@ -151,7 +155,7 @@ export const regenerateMessage = async (
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/regenerate?session_id=${sessionId}`,
+      `${API_URL}/regenerate`,
       {
         method: 'POST',
         headers: {
@@ -160,7 +164,8 @@ export const regenerateMessage = async (
         },
         body: JSON.stringify({ 
           message_id: messageId,
-          original_content: content 
+          original_content: content,
+          session_id: sessionId
         })
       }
     );
@@ -215,13 +220,14 @@ export const postRegenerateError = async (
 ): Promise<void> => {
   try {
     const response = await fetch(
-      `${API_URL}/regenerate/error?session_id=${sessionId}`,
+      `${API_URL}/regenerate/error`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          session_id: sessionId,
           message_id: messageId,
           content: errorMessage.content,
           role: errorMessage.role,

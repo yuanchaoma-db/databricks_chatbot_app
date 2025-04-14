@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faCheck } from '@fortawesome/free-solid-svg-icons';
 import copyIconUrl from '../assets/images/copy_icon.svg';
 import refreshIconUrl from '../assets/images/sync_icon.svg';
 import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
 import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import downIconUrl from '../assets/images/down_icon.svg';
+import checkmarkIconUrl from '../assets/images/checkmark_icon.svg';
 import { Message } from '../types';
 import { useChat } from '../context/ChatContext';
 import sourceIconUrl from '../assets/images/source_icon.svg';
@@ -103,8 +106,8 @@ const ActionButton = styled.button`
   }
 `;
 
-const CopyButton = styled(ActionButton)`
-  background-image: url(${copyIconUrl});
+const CopyButton = styled(ActionButton)<{ copied: boolean }>`
+  background-image: url(${props => props.copied ? '' : copyIconUrl});
   background-size: 16px;
   background-repeat: no-repeat;
   background-position: center;
@@ -112,6 +115,15 @@ const CopyButton = styled(ActionButton)`
     background-color: rgba(34, 114, 180, 0.08);
     color: #0E538B;
   }
+`;
+
+const CheckIconWrapper = styled.div<{ $copied: boolean }>`
+  display: none;
+  color: #5F7281;
+  font-size: 15px;
+  ${props => props.$copied && `
+    display: block;
+  `}
 `;
 
 const RefreshButton = styled(ActionButton)`
@@ -346,11 +358,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const isUser = message.role === 'user';
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
   console.log(`Message Inside ChatMessage=====>: ${message.content.slice(0, 10)} ${message.message_id}`);
   const currentRating = messageRatings[message.message_id];
 
-  const handleCopy = () => {
-    copyMessage(message.content);
+  const handleCopy = async () => {
+    await copyMessage(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
   };
 
   const handleRegenerate = async () => {
@@ -462,8 +477,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
             <CopyButton 
               onClick={handleCopy} 
               title="Copy" 
+              copied={copied}
               data-testid={`copy-button-${message.message_id}`}
-            />
+            >
+              <CheckIconWrapper $copied={copied}>
+                <FontAwesomeIcon icon={faCheck} />
+              </CheckIconWrapper>
+            </CopyButton>
             <RefreshButton 
               onClick={handleRegenerate} 
               title="Regenerate" 
