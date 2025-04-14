@@ -9,7 +9,6 @@ import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
 import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import downIconUrl from '../assets/images/down_icon.svg';
-import checkmarkIconUrl from '../assets/images/checkmark_icon.svg';
 import { Message } from '../types';
 import { useChat } from '../context/ChatContext';
 import sourceIconUrl from '../assets/images/source_icon.svg';

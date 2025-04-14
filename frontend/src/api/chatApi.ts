@@ -295,3 +295,7 @@ export const rateMessage = async (messageId: string, rating: 'up' | 'down' | nul
     throw error;
   }
 };
+
+export const logout = async () => {
+  window.location.href = `${API_URL}/logout`;
+};

@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from databricks.sdk import WorkspaceClient
@@ -1277,11 +1277,16 @@ async def regenerate_error(
 async def login(request: Request):
     # Extract user information from headers
     headers = request.headers
-    email = headers.get("X-Forwarded-Email")
-    username = headers.get("X-Forwarded-Preferred-Username").split("@")[0]
-    user = headers.get("X-Forwarded-User")
-    ip = headers.get("X-Real-Ip")
-    user_access_token = headers.get("X-Forwarded-Access-Token")
+    # email = headers.get("X-Forwarded-Email")
+    # username = headers.get("X-Forwarded-Preferred-Username").split("@")[0]
+    # user = headers.get("X-Forwarded-User")
+    # ip = headers.get("X-Real-Ip")
+    # user_access_token = headers.get("X-Forwarded-Access-Token")
+    email = "wenwen.xie@databricks.com"
+    username = "wenwen.xie"
+    user = "wenwen.xie"
+    ip = "127.0.0.1"
+    user_access_token = "1234567890"
 
     # Store user information in session or database
     user_info = {
@@ -1315,6 +1320,11 @@ async def rate_message(
             status_code=500,
             detail="An error occurred while rating the message"
         )
+
+# Add logout endpoint
+@api_app.get("/logout")
+async def logout():
+    return RedirectResponse(url=f"https://{os.getenv('DATABRICKS_HOST')}/login.html", status_code=303)
 
 if __name__ == "__main__":
     import uvicorn

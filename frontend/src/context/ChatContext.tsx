@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel, rateMessage as apiRateMessage } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel, rateMessage as apiRateMessage, logout as apiLogout } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -383,10 +383,15 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = () => {
-    setMessages([]);
-    setChats([]);
+    // Clear local state
     setCurrentChat(null);
+    setChats([]);
+    setMessages([]);
     setCurrentSessionId(null);
+    setMessageRatings({});
+    
+    // Call the logout API endpoint which will handle the redirect
+    apiLogout();
   };
 
   return (

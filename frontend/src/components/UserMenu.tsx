@@ -112,7 +112,11 @@ const UserMenu: React.FC = () => {
   }, []);
 
   const handleLogout = () => {
-    logout();
+    try {
+      logout();
+    } catch (error) {
+      console.error('Failed to logout:', error);
+    }
     setIsOpen(false);
   };
 
