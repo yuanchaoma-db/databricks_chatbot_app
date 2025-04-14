@@ -219,13 +219,6 @@ class ChatDatabase:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)')
                 
-                # Add rating column if it doesn't exist
-                try:
-                    cursor.execute('SELECT rating FROM messages LIMIT 1')
-                except sqlite3.OperationalError:
-                    logger.info("Adding rating column to messages table")
-                    cursor.execute('ALTER TABLE messages ADD COLUMN rating TEXT CHECK(rating IN ("up", "down", NULL))')
-                
                 conn.commit()
             except sqlite3.Error as e:
                 logger.error(f"Error initializing database: {str(e)}")
