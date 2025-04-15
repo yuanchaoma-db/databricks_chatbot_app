@@ -898,7 +898,7 @@ async def chat(
                         start_time = time.time()
                         first_token_time = None
                         accumulated_content = ""
-                        sources = []
+                        sources = None
 
                         async with streaming_client.stream('POST', 
                             f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
@@ -919,17 +919,13 @@ async def chat(
                                                 first_token_time = time.time()
                                                 ttft = first_token_time - start_time
                                                 
-                                            sources = await extract_sources_from_trace(data)
-                                            
                                             if 'choices' in data and len(data['choices']) > 0:
                                                 delta = data['choices'][0].get('delta', {})
                                                 content = delta.get('content', '')
                                                 accumulated_content += content
-                                                
                                                 # Extract sources if this is the final message containing databricks_options
-                                                if 'databricks_options' in data:
+                                                if 'databricks_output' in data:
                                                     sources = await extract_sources_from_trace(data)
-                                                
                                                 # Include the same assistant_message_id in each chunk
                                                 response_data = {
                                                     'message_id': assistant_message_id,
@@ -965,8 +961,8 @@ async def chat(
                                         'supports_trace': supports_trace,
                                         'last_checked': datetime.now()
                                     }
-                                    total_time = time.time() - start_time
-                                    yield f"data: {json.dumps({'message_id': assistant_message_id,'metrics': {'timeToFirstToken': ttft, 'totalTime': total_time}})}\n\n"
+                                    yield f"data: {assistant_message.model_dump_json()}\n\n"
+                                    yield "event: done\ndata: {}\n\n"
                             else:
                                 raise Exception("Streaming not supported")
 
@@ -1221,7 +1217,7 @@ async def regenerate_message(
                     start_time = time.time()
                     first_token_time = None
                     accumulated_content = ""
-                    sources = []
+                    sources = None
 
                     if supports_streaming:
                         request_data["stream"] = True
@@ -1243,10 +1239,10 @@ async def regenerate_message(
                                                     ttft = first_token_time - start_time
 
                                                 content = data['choices'][0].get('delta', {}).get('content', '')
-                                                
-                                                # Extract sources if this is the final message containing databricks_options
-                                                if 'databricks_options' in data:
+                                                # Extract sources if this is the final message containing databricks_output
+                                                if 'databricks_output' in data:
                                                     sources = await extract_sources_from_trace(data)
+                                                    
                                                 
                                                 if content:
                                                     accumulated_content += content
@@ -1283,7 +1279,8 @@ async def regenerate_message(
                                 chat_db.update_message(request.session_id, user_id, updated_message)
                                 
                                 # Send final metrics
-                                yield f"data: {json.dumps({'metrics': {'timeToFirstToken': ttft, 'totalTime': total_time}})}\n\n"
+                                
+                                yield f"data: {updated_message.model_dump_json()}\n\n"
                                 yield "event: done\ndata: {}\n\n"
                     else:
                         # Non-streaming case

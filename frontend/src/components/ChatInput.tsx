@@ -11,7 +11,7 @@ const InputContainer = styled.div<InputContainerProps>`
   width: 100%;
   max-width: 680px;
   min-height: 50px;
-  height: 100px;
+  height: 90px;
   position: relative;
   border: 1px solid #C0CDD8;
   border-radius: 12px;
