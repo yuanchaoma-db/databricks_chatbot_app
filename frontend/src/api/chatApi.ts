@@ -253,7 +253,6 @@ export const fetchUserInfo = async (): Promise<{ username: string; email: string
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
-    console.log('data--->', data);
     return data.user_info;
   } catch (error) {
     console.error('Error fetching user info:', error);

@@ -157,9 +157,8 @@ class ChatDatabase:
         self.db_file = db_file
         self.db_lock = threading.Lock()
         self.connection_pool = {}
-        self.init_db()
-        # Cache for first message status
         self.first_message_cache = {}
+        self.init_db()
     
     def get_connection(self):
         """Get a database connection from the pool or create a new one"""
@@ -187,10 +186,12 @@ class ChatDatabase:
                 # Enable foreign key constraints
                 cursor.execute('PRAGMA foreign_keys = ON')
                 
-                # Create sessions table
+                # Create sessions table with user information
                 cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    user_email TEXT,
                     first_query TEXT,
                     timestamp TEXT NOT NULL,
                     is_active INTEGER DEFAULT 1,
@@ -203,14 +204,28 @@ class ChatDatabase:
                 CREATE TABLE IF NOT EXISTS messages (
                     message_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
                     content TEXT NOT NULL,
                     role TEXT NOT NULL,
                     model TEXT,
                     timestamp TEXT NOT NULL,
                     sources TEXT,
                     metrics TEXT,
-                    rating TEXT CHECK(rating IN ('up', 'down', NULL)),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+                )
+                ''')
+                
+                # Create ratings table
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS message_ratings (
+                    message_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    rating TEXT CHECK(rating IN ('up', 'down')),
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (message_id, user_id),
+                    FOREIGN KEY (message_id) REFERENCES messages(message_id) ON DELETE CASCADE,
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 )
                 ''')
@@ -219,6 +234,10 @@ class ChatDatabase:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_timestamp ON sessions(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ratings_message_id ON message_ratings(message_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ratings_user_id ON message_ratings(user_id)')
                 
                 conn.commit()
             except sqlite3.Error as e:
@@ -227,7 +246,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def save_message_to_session(self, session_id: str, message: MessageResponse, is_first_message: bool = False):
+    def save_message_to_session(self, session_id: str, user_id: str, message: MessageResponse, user_info: dict = None, is_first_message: bool = False):
         """Save a message to a chat session, creating the session if it doesn't exist"""
         with self.db_lock:
             conn = self.get_connection()
@@ -236,29 +255,35 @@ class ChatDatabase:
             try:
                 conn.execute('BEGIN TRANSACTION')
                 
+                logger.info(f"Saving message: session_id={session_id}, user_id={user_id}, message_id={message.message_id}")
+                
                 # Check if session exists
-                cursor.execute('SELECT session_id FROM sessions WHERE session_id = ?', (session_id,))
+                cursor.execute('SELECT session_id FROM sessions WHERE session_id = ? and user_id = ?', (session_id, user_id))
                 if not cursor.fetchone():
-                    # Create new session
+                    logger.info(f"Creating new session: session_id={session_id}, user_id={user_id}")
+                    # Create new session with user info
                     cursor.execute('''
-                    INSERT INTO sessions (session_id, first_query, timestamp, is_active)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO sessions (session_id, user_id, user_email, first_query, timestamp, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ''', (
                         session_id,
+                        user_id,  # Use the provided user_id directly
+                        user_info.get('email') if user_info else None,
                         message.content if is_first_message else "",
                         message.timestamp.isoformat(),
                         1
                     ))
                 
-                # Save message
+                # Save message with user_id
                 cursor.execute('''
                 INSERT INTO messages (
-                    message_id, session_id, content, role, model, 
+                    message_id, session_id, user_id, content, role, model, 
                     timestamp, sources, metrics
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     message.message_id,
                     session_id,
+                    user_id,  # Use the provided user_id directly
                     message.content,
                     message.role,
                     message.model,
@@ -278,7 +303,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def update_message(self, session_id: str, message: MessageResponse):
+    def update_message(self, session_id: str, user_id: str, message: MessageResponse):
         """Update an existing message in the database"""
         with self.db_lock:
             conn = self.get_connection()
@@ -295,7 +320,7 @@ class ChatDatabase:
                     timestamp = ?, 
                     sources = ?, 
                     metrics = ?
-                WHERE message_id = ? AND session_id = ?
+                WHERE message_id = ? AND session_id = ? AND user_id = ?
                 ''', (
                     message.content,
                     message.role,
@@ -304,7 +329,8 @@ class ChatDatabase:
                     json.dumps(message.sources) if message.sources else None,
                     json.dumps(message.metrics) if message.metrics else None,
                     message.message_id,
-                    session_id
+                    session_id,
+                    user_id
                 ))
                 
                 if cursor.rowcount == 0:
@@ -321,21 +347,32 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def get_chat_history(self) -> ChatHistoryResponse:
-        """Retrieve all chat sessions with their messages"""
+    def get_chat_history(self, user_id: str = None) -> ChatHistoryResponse:
+        """Retrieve chat sessions with their messages for a specific user"""
         with self.db_lock:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             try:
-                cursor.execute('''
-                SELECT s.session_id, s.first_query, s.timestamp, s.is_active,
-                       m.message_id, m.content, m.role, m.model, m.timestamp as message_timestamp,
-                       m.sources, m.metrics
-                FROM sessions s
-                LEFT JOIN messages m ON s.session_id = m.session_id
-                ORDER BY s.timestamp DESC, m.timestamp ASC
-                ''')
+                if user_id:
+                    cursor.execute('''
+                    SELECT s.session_id, s.first_query, s.timestamp, s.is_active,
+                           m.message_id, m.content, m.role, m.model, m.timestamp as message_timestamp,
+                           m.sources, m.metrics
+                    FROM sessions s
+                    LEFT JOIN messages m ON s.session_id = m.session_id and m.user_id = s.user_id
+                    WHERE s.user_id = ?
+                    ORDER BY s.timestamp DESC, m.timestamp ASC
+                    ''', (user_id,))
+                else:
+                    cursor.execute('''
+                    SELECT s.session_id, s.first_query, s.timestamp, s.is_active,
+                           m.message_id, m.content, m.role, m.model, m.timestamp as message_timestamp,
+                           m.sources, m.metrics
+                    FROM sessions s
+                    LEFT JOIN messages m ON s.session_id = m.session_id and m.user_id = s.user_id
+                    ORDER BY s.timestamp DESC, m.timestamp ASC
+                    ''')
                 
                 sessions = {}
                 for row in cursor.fetchall():
@@ -360,6 +397,10 @@ class ChatDatabase:
                             metrics=json.loads(row['metrics']) if row['metrics'] else None
                         ))
                 
+                # Sort messages by timestamp for each session
+                for session in sessions.values():
+                    session.messages.sort(key=lambda x: x.timestamp)
+                
                 return ChatHistoryResponse(sessions=list(sessions.values()))
             except sqlite3.Error as e:
                 logger.error(f"Error getting chat history: {str(e)}")
@@ -367,34 +408,45 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def get_chat(self, session_id: str) -> ChatHistoryItem:
+    def get_chat(self, session_id: str, user_id: str = None) -> ChatHistoryItem:
         """Retrieve a specific chat session"""
         with self.db_lock:
             conn = self.get_connection()
             cursor = conn.cursor()
             
             try:
-                # Get session info
-                cursor.execute('''
-                SELECT first_query, timestamp, is_active
-                FROM sessions
-                WHERE session_id = ?
-                ''', (session_id,))
+                logger.info(f"Getting chat for session_id: {session_id}, user_id: {user_id}")
+                
+                # Get session info with user check
+                if user_id:
+                    cursor.execute('''
+                    SELECT first_query, timestamp, is_active
+                    FROM sessions
+                    WHERE session_id = ? AND user_id = ?
+                    ''', (session_id, user_id))
+                else:
+                    cursor.execute('''
+                    SELECT first_query, timestamp, is_active
+                    FROM sessions
+                    WHERE session_id = ?
+                    ''', (session_id,))
                 
                 session_data = cursor.fetchone()
                 if not session_data:
+                    logger.error(f"Session not found: session_id={session_id}, user_id={user_id}")
                     raise HTTPException(status_code=404, detail="Chat not found")
                 
                 # Get messages
                 cursor.execute('''
-                SELECT message_id, content, role, model, timestamp, sources, metrics
+                SELECT message_id, content, role, model, timestamp, sources, metrics, user_id
                 FROM messages
-                WHERE session_id = ?
+                WHERE session_id = ? and user_id = ?
                 ORDER BY timestamp ASC
-                ''', (session_id,))
+                ''', (session_id, user_id))
                 
                 messages = []
                 for row in cursor.fetchall():
+                    logger.info(f"Found message: message_id={row['message_id']}, user_id={row['user_id']}")
                     messages.append(MessageResponse(
                         message_id=row['message_id'],
                         content=row['content'],
@@ -418,7 +470,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def clear_session(self, session_id: str):
+    def clear_session(self, session_id: str, user_id: str):
         """Clear a session and its messages"""
         with self.db_lock:
             conn = self.get_connection()
@@ -428,9 +480,9 @@ class ChatDatabase:
                 conn.execute('BEGIN TRANSACTION')
                 
                 # Delete messages
-                cursor.execute('DELETE FROM messages WHERE session_id = ?', (session_id,))
+                cursor.execute('DELETE FROM messages WHERE session_id = ? and user_id = ?', (session_id, user_id))
                 # Delete session
-                cursor.execute('DELETE FROM sessions WHERE session_id = ?', (session_id,))
+                cursor.execute('DELETE FROM sessions WHERE session_id = ? and user_id = ?', (session_id, user_id))
                 # Clear cache
                 if session_id in self.first_message_cache:
                     del self.first_message_cache[session_id]
@@ -443,7 +495,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
     
-    def is_first_message(self, session_id: str) -> bool:
+    def is_first_message(self, session_id: str, user_id: str) -> bool:
         """Check if this is the first message in a session"""
         # Check cache first
         if session_id in self.first_message_cache:
@@ -456,8 +508,8 @@ class ChatDatabase:
             try:
                 cursor.execute('''
                 SELECT COUNT(*) FROM messages 
-                WHERE session_id = ?
-                ''', (session_id,))
+                WHERE session_id = ? and user_id = ?
+                ''', (session_id, user_id))
                 
                 count = cursor.fetchone()[0]
                 is_first = count == 0
@@ -471,8 +523,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
 
-    def update_message_rating(self, message_id: str, rating: str | None) -> bool:
-        """Update the rating of a message"""
+    def update_message_rating(self, message_id: str, user_id: str, rating: str | None) -> bool:
         with self.db_lock:
             conn = self.get_connection()
             cursor = conn.cursor()
@@ -480,15 +531,33 @@ class ChatDatabase:
             try:
                 conn.execute('BEGIN TRANSACTION')
                 
+                # First verify the message exists and belongs to the user
                 cursor.execute('''
-                UPDATE messages 
-                SET rating = ?
-                WHERE message_id = ?
-                ''', (rating, message_id))
+                SELECT message_id, session_id FROM messages 
+                WHERE message_id = ? AND user_id = ?
+                ''', (message_id, user_id))
                 
-                if cursor.rowcount == 0:
+                result = cursor.fetchone()
+                if not result:
+                    logger.error(f"Message {message_id} not found for user {user_id}")
                     conn.rollback()
                     return False
+                
+                session_id = result['session_id']
+                
+                if rating is None:
+                    # Remove the rating
+                    cursor.execute('''
+                    DELETE FROM message_ratings 
+                    WHERE message_id = ? AND user_id = ?
+                    ''', (message_id, user_id))
+                else:
+                    # Insert or update the rating
+                    cursor.execute('''
+                    INSERT INTO message_ratings (message_id, user_id, session_id, rating)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(message_id, user_id) DO UPDATE SET rating = excluded.rating
+                    ''', (message_id, user_id, session_id, rating))
                 
                 conn.commit()
                 return True
@@ -499,7 +568,7 @@ class ChatDatabase:
             finally:
                 cursor.close()
 
-    def get_message_rating(self, message_id: str) -> str | None:
+    def get_message_rating(self, message_id: str, user_id: str) -> str | None:
         """Get the rating of a message"""
         with self.db_lock:
             conn = self.get_connection()
@@ -508,9 +577,9 @@ class ChatDatabase:
             try:
                 cursor.execute('''
                 SELECT rating
-                FROM messages
-                WHERE message_id = ?
-                ''', (message_id,))
+                FROM message_ratings
+                WHERE message_id = ? AND user_id = ?
+                ''', (message_id, user_id))
                 
                 result = cursor.fetchone()
                 return result['rating'] if result else None
@@ -659,7 +728,23 @@ async def handle_databricks_response(
 @api_app.post("/error")
 async def error(
     error: ErrorRequest,
+    request: Request
 ):
+    # user_info = {
+    #     "email": request.headers.get("X-Forwarded-Email"),
+    #     "user_id": request.headers.get("X-Forwarded-User"),
+    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+    # }
+    # Get user info from headers
+    user_info = {
+        "email": "test@databricks.com",
+        "user_id": "test_user1",
+        "username": "test_user1"
+    }
+    user_id = user_info["user_id"]
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+
     # Create error message response
     error_message = MessageResponse(
         message_id=error.message_id,
@@ -672,7 +757,7 @@ async def error(
     )
     
     # Save to session
-    chat_db.save_message_to_session(error.session_id, error_message)
+    chat_db.save_message_to_session(error.session_id, user_id, error_message)
     return {"status": "error saved"}
 
 @api_app.get("/model")
@@ -683,16 +768,28 @@ async def get_model():
 @api_app.post("/chat")
 async def chat(
     message: MessageRequest,
+    request: Request,
     headers: dict = Depends(get_auth_headers)
 ):
     try:
-        # Generate assistant message ID once at the start
-        assistant_message_id = str(uuid.uuid4())
+        # user_info = {
+    #     "email": request.headers.get("X-Forwarded-Email"),
+    #     "user_id": request.headers.get("X-Forwarded-User"),
+    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+    # }
+        # Get user info from headers
+        user_info = {
+            "email": "test@databricks.com",
+            "user_id": "test_user1",
+            "username": "test_user1"
+        }
+        user_id = user_info["user_id"]
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User not authenticated")
 
-        # Check if this is the first message in the session
-        is_first_message = chat_db.is_first_message(message.session_id)
+        is_first_message = chat_db.is_first_message(message.session_id, user_id)
 
-        # Save user message to session
+        # Save user message to session with user info
         user_message = MessageResponse(
             message_id=str(uuid.uuid4()),
             content=message.content,
@@ -701,15 +798,17 @@ async def chat(
             timestamp=datetime.now()
         )
         chat_db.save_message_to_session(
-            message.session_id, 
+            message.session_id,
+            user_id,
             user_message,
+            user_info=user_info,
             is_first_message=is_first_message
         )
 
         async def generate():
             streaming_timeout = httpx.Timeout(
-                connect=8.0,  # More time to establish connection
-                read=30.0,    # More time to read streaming responses
+                connect=8.0,
+                read=30.0,
                 write=8.0,
                 pool=8.0
             )
@@ -740,7 +839,7 @@ async def chat(
                         success, response_data = await handle_databricks_response(response, start_time)
                         if success and response_data:
                             assistant_message = MessageResponse(
-                                message_id=assistant_message_id,
+                                message_id=str(uuid.uuid4()),
                                 content=response_data["content"],
                                 role="assistant",
                                 model=SERVING_ENDPOINT_NAME,
@@ -748,22 +847,23 @@ async def chat(
                                 sources=response_data.get("sources"),
                                 metrics=response_data.get("metrics")
                             )
-                            chat_db.save_message_to_session(message.session_id, assistant_message)
+                            chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                             
                             yield f"data: {json.dumps(response_data)}\n\n"
                             yield "event: done\ndata: {}\n\n"
                 
                         else:
                             logger.error("Failed to process Databricks response")
+                            error_message_id = str(uuid.uuid4())
                             error_response = {
-                                'message_id': assistant_message_id,
+                                'message_id': error_message_id,
                                 'content': 'Failed to process response from model',
                                 'sources': [],
                                 'metrics': None
                             }
                             
                             assistant_message = MessageResponse(
-                                message_id=assistant_message_id,
+                                message_id=error_message_id,
                                 content=error_response["content"],
                                 role="assistant",
                                 model=SERVING_ENDPOINT_NAME,
@@ -771,13 +871,14 @@ async def chat(
                                 sources=error_response.get("sources"),
                                 metrics=error_response.get("metrics")
                             )
-                            chat_db.save_message_to_session(message.session_id, assistant_message)
+                            chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                             yield f"data: {json.dumps(error_response)}\n\n"
                             yield "event: done\ndata: {}\n\n"
                     except Exception as e:
                         logger.error(f"Error in non-streaming response: {str(e)}")
+                        error_message_id = str(uuid.uuid4())
                         assistant_message = MessageResponse(
-                            message_id=assistant_message_id,
+                            message_id=error_message_id,
                             content="Request timed out. Please try again later.",
                             role="assistant",
                             model=SERVING_ENDPOINT_NAME,
@@ -785,14 +886,15 @@ async def chat(
                             sources=[],
                             metrics=None
                         )
-                        chat_db.save_message_to_session(message.session_id, assistant_message)
-                        yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Failed to process response from model', 'metrics': None})}\n\n"
+                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                        yield f"data: {json.dumps({'message_id': error_message_id,'content': 'Failed to process response from model', 'metrics': None})}\n\n"
                         yield "event: done\ndata: {}\n\n"
             else:
                 async with httpx.AsyncClient(timeout=streaming_timeout) as streaming_client:
                     try:
                         logger.info("streaming is running")
                         request_data["stream"] = True
+                        assistant_message_id = str(uuid.uuid4())
                         start_time = time.time()
                         first_token_time = None
                         accumulated_content = ""
@@ -830,7 +932,7 @@ async def chat(
                                                 
                                                 # Include the same assistant_message_id in each chunk
                                                 response_data = {
-                                                    'message_id': assistant_message_id,  # Use the pre-generated ID
+                                                    'message_id': assistant_message_id,
                                                     'content': content if content else None,
                                                     'sources': sources if sources else None,
                                                     'metrics': {
@@ -847,7 +949,7 @@ async def chat(
                                 if has_content:
                                     # Save complete message to session after streaming is done
                                     assistant_message = MessageResponse(
-                                        message_id=assistant_message_id,  # Use the same ID here
+                                        message_id=assistant_message_id,
                                         content=accumulated_content,
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
@@ -855,7 +957,7 @@ async def chat(
                                         sources=sources,
                                         metrics={'timeToFirstToken': ttft, 'totalTime': time.time() - start_time}
                                     )
-                                    chat_db.save_message_to_session(message.session_id, assistant_message)
+                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                                     
                                     # Update cache to indicate streaming support
                                     streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME] = {
@@ -888,7 +990,6 @@ async def chat(
                         )
                         
                         # Only for this fallback request, create a transport with connection pooling disabled
-                        # This won't affect your other normal connections
                         fallback_transport = httpx.AsyncHTTPTransport(
                             retries=3,
                             limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
@@ -896,7 +997,7 @@ async def chat(
                         
                         async with httpx.AsyncClient(
                             timeout=fallback_timeout,
-                            transport=fallback_transport  # Use the special transport only for fallback
+                            transport=fallback_transport
                         ) as fallback_client:
                             try:
                                 # Reset start time for fallback
@@ -920,7 +1021,7 @@ async def chat(
                                 if success and response_data:
                                     # Save assistant message to session
                                     assistant_message = MessageResponse(
-                                        message_id=assistant_message_id,
+                                        message_id=str(uuid.uuid4()),
                                         content=response_data["content"],
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
@@ -928,20 +1029,21 @@ async def chat(
                                         sources=response_data.get("sources"),
                                         metrics=response_data.get("metrics")
                                     )
-                                    chat_db.save_message_to_session(message.session_id, assistant_message)
+                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                                     
                                     yield f"data: {json.dumps(response_data)}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                                 else:
                                     logger.error("Failed to process Databricks response")
+                                    error_message_id = str(uuid.uuid4())
                                     error_response = {
-                                        'message_id': assistant_message_id,
+                                        'message_id': error_message_id,
                                         'content': 'Failed to process response from model',
                                         'sources': [],
                                         'metrics': None
                                     }
                                     assistant_message = MessageResponse(
-                                        message_id=assistant_message_id,
+                                        message_id=error_message_id,
                                         content=error_response["content"],
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
@@ -949,13 +1051,14 @@ async def chat(
                                         sources=error_response.get("sources"),
                                         metrics=error_response.get("metrics")
                                     )
-                                    chat_db.save_message_to_session(message.session_id, assistant_message)
+                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                                     yield f"data: {json.dumps(error_response)}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                             except httpx.ReadTimeout as timeout_error:
                                 logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
+                                error_message_id = str(uuid.uuid4())
                                 assistant_message = MessageResponse(
-                                        message_id=assistant_message_id,
+                                        message_id=error_message_id,
                                         content="Request timed out. Please try again later.",
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
@@ -963,8 +1066,8 @@ async def chat(
                                         sources=[],
                                         metrics={"totalTime": time.time() - start_time}
                                     )
-                                chat_db.save_message_to_session(message.session_id, assistant_message)
-                                yield f"data: {json.dumps({'message_id': assistant_message_id,'content': 'Request timed out. Please try again later.'})}\n\n"
+                                chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                                yield f"data: {json.dumps({'message_id': error_message_id,'content': 'Request timed out. Please try again later.'})}\n\n"
                                 yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
@@ -984,8 +1087,9 @@ async def chat(
         if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
             error_message = "The service is currently experiencing high demand. Please wait a moment and try again."
         start_time = time.time()
+        error_message_id = str(uuid.uuid4())
         error_response = {
-            'message_id': assistant_message_id,
+            'message_id': error_message_id,
             'content': error_message,
             'sources': [],
             'metrics': None,
@@ -993,7 +1097,7 @@ async def chat(
         }
         
         assistant_message = MessageResponse(
-            message_id=assistant_message_id,
+            message_id=error_message_id,
             content=error_response["content"],
             role="assistant",
             model=SERVING_ENDPOINT_NAME,
@@ -1001,7 +1105,7 @@ async def chat(
             sources=error_response.get("sources"),
             metrics=error_response.get("metrics")
         )
-        chat_db.save_message_to_session(message.session_id, assistant_message)
+        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
         
         async def error_generate():
             yield f"data: {json.dumps(error_response)}\n\n"
@@ -1017,19 +1121,31 @@ async def chat(
         )
 
 @api_app.get("/chats", response_model=ChatHistoryResponse)
-async def get_chat_history():
-    return chat_db.get_chat_history()
+async def get_chat_history(request: Request):
+    # Get user info from headers
+    # user_id = request.headers.get("X-Forwarded-User")
+    user_id = "test_user1"
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+    return chat_db.get_chat_history(user_id)
 
 @api_app.get("/chats/{session_id}", response_model=ChatHistoryItem)
-async def get_chat(session_id: str):
-    return chat_db.get_chat(session_id)
+async def get_chat(session_id: str, request: Request):
+    # Get user info from headers
+    # user_id = request.headers.get("X-Forwarded-User")
+    user_id = "test_user1"
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User not authenticated")
+    return chat_db.get_chat(session_id, user_id)
 
 # Add endpoint to get session messages
 @api_app.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str):
     try:
         # Get the chat session from database
-        chat_data = chat_db.get_chat(session_id)
+        # user_id = request.headers.get("X-Forwarded-User")
+        user_id = "test_user1"
+        chat_data = chat_db.get_chat(session_id, user_id)
         if not chat_data:
             logger.error(f"Session {session_id} not found in database")
             raise HTTPException(
@@ -1049,11 +1165,27 @@ async def get_session_messages(session_id: str):
 @api_app.post("/regenerate")
 async def regenerate_message(
     request: RegenerateRequest,
+    request_obj: Request,
     headers: dict = Depends(get_auth_headers)
 ):
     try:
+        # user_info = {
+    #     "email": request.headers.get("X-Forwarded-Email"),
+    #     "user_id": request.headers.get("X-Forwarded-User"),
+    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+    # }
+        # Get user info from headers
+        user_info = {
+            "email": "test@databricks.com",
+            "user_id": "test_user1",
+            "username": "test_user1"
+        }
+        user_id = user_info["user_id"]
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+
         # Get the chat session from database
-        chat_data = chat_db.get_chat(request.session_id)
+        chat_data = chat_db.get_chat(request.session_id, user_id)
         if not chat_data:
             logger.error(f"Session {request.session_id} not found in database")
             raise HTTPException(
@@ -1148,7 +1280,7 @@ async def regenerate_message(
                                 )
                                 
                                 # Update message in database
-                                chat_db.update_message(request.session_id, updated_message)
+                                chat_db.update_message(request.session_id, user_id, updated_message)
                                 
                                 # Send final metrics
                                 yield f"data: {json.dumps({'metrics': {'timeToFirstToken': ttft, 'totalTime': total_time}})}\n\n"
@@ -1186,7 +1318,7 @@ async def regenerate_message(
                                 )
                                 
                                 # Update message in database
-                                chat_db.update_message(request.session_id, updated_message)
+                                chat_db.update_message(request.session_id, user_id, updated_message)
                                 
                                 yield f"data: {json.dumps({**response_data, 'message_id': request.message_id})}\n\n"
                                 yield "event: done\ndata: {}\n\n"
@@ -1213,7 +1345,7 @@ async def regenerate_message(
                 )
                 
                 # Update error message in database
-                chat_db.update_message(request.session_id, error_message)
+                chat_db.update_message(request.session_id, user_id, error_message)
                 
                 yield f"data: {json.dumps(error_response)}\n\n"
                 yield "event: done\ndata: {}\n\n"
@@ -1237,11 +1369,27 @@ async def regenerate_message(
 @api_app.post("/regenerate/error")
 async def regenerate_error(
     error: ErrorRequest,
+    request: Request,
     headers: dict = Depends(get_auth_headers)
 ):
     try:
+        # user_info = {
+    #     "email": request.headers.get("X-Forwarded-Email"),
+    #     "user_id": request.headers.get("X-Forwarded-User"),
+    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+    # }
+        # Get user info from headers
+        user_info = {
+            "email": "test@databricks.com",
+            "user_id": "test_user1",
+            "username": "test_user1"
+        }
+        user_id = user_info["user_id"]
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+
         # Get the chat session from database
-        chat_data = chat_db.get_chat(error.session_id)
+        chat_data = chat_db.get_chat(error.session_id, user_id)
         if not chat_data:
             logger.error(f"Session {error.session_id} not found in database")
             raise HTTPException(
@@ -1261,7 +1409,7 @@ async def regenerate_error(
         )
         
         # Update error message in database
-        chat_db.update_message(error.session_id, error_message)
+        chat_db.update_message(error.session_id, user_id, error_message)
         
         return {"status": "error saved"}
         
@@ -1272,42 +1420,20 @@ async def regenerate_error(
             detail="An error occurred while saving the error message."
         )
 
-# Example endpoint for user login or session initialization
-@api_app.get("/login")
-async def login(request: Request):
-    # Extract user information from headers
-    headers = request.headers
-    # email = headers.get("X-Forwarded-Email")
-    # username = headers.get("X-Forwarded-Preferred-Username").split("@")[0]
-    # user = headers.get("X-Forwarded-User")
-    # ip = headers.get("X-Real-Ip")
-    # user_access_token = headers.get("X-Forwarded-Access-Token")
-    email = "wenwen.xie@databricks.com"
-    username = "wenwen.xie"
-    user = "wenwen.xie"
-    ip = "127.0.0.1"
-    user_access_token = "1234567890"
-
-    # Store user information in session or database
-    user_info = {
-        "email": email,
-        "username": username,
-        "user": user,
-        "ip": ip,
-        "user_access_token": user_access_token
-    }
-
-    # Example response
-    return {"message": "User logged in", "user_info": user_info}
-
 # Add new endpoint for rating messages
 @api_app.post("/messages/{message_id}/rate")
 async def rate_message(
     message_id: str,
-    rating: str | None = Query(..., regex="^(up|down)$")
+    rating: str | None = Query(..., regex="^(up|down)$"),
+    headers: dict = Depends(get_auth_headers)
 ):
     try:
-        success = chat_db.update_message_rating(message_id, rating)
+        # Get user info from headers
+        #user_id = headers.get("X-Forwarded-User")
+        user_id = "test_user1"
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User not authenticated")
+        success = chat_db.update_message_rating(message_id, user_id, rating)
         if not success:
             raise HTTPException(
                 status_code=404,
@@ -1325,6 +1451,20 @@ async def rate_message(
 @api_app.get("/logout")
 async def logout():
     return RedirectResponse(url=f"https://{os.getenv('DATABRICKS_HOST')}/login.html", status_code=303)
+
+@api_app.get("/login")
+async def login(request: Request):
+    # user_info = {
+    #     "email": request.headers.get("X-Forwarded-Email"),
+    #     "user_id": request.headers.get("X-Forwarded-User"),
+    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+    # }
+    user_info = {
+        "email": "test@databricks.com",
+        "user_id": "test_user1",
+        "username": "test_user1"
+    }
+    return {"user_info": user_info}
 
 if __name__ == "__main__":
     import uvicorn
