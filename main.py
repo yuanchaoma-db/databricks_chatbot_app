@@ -250,7 +250,6 @@ async def handle_databricks_response(
         data = response.json()
         print(f"Data: {data}")
         sources = await extract_sources_from_trace(data)
-        logger.info(f"Sources: {sources}")
 
         if not data:
             return False, None, None
