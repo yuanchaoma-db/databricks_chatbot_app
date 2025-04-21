@@ -618,6 +618,12 @@ async def chat(
                                             'supports_trace': supports_trace,
                                             'last_checked': datetime.now()
                                         }
+                                        # Send final message with complete content and sources
+                                        final_response = {
+                                            'message_id': assistant_message_id,
+                                            'sources': sources,
+                                        }
+                                        yield f"data: {json.dumps(final_response)}\n\n"
                                         yield "event: done\ndata: {}\n\n"
                                 else:
                                     raise Exception("Streaming not supported")
@@ -960,7 +966,11 @@ async def regenerate_message(
                                     
                                     # Update message in database
                                     chat_db.update_message(request.session_id, user_id, updated_message)
-                                    
+                                    final_response = {
+                                            'message_id': request.message_id,
+                                            'sources': sources
+                                        }
+                                    yield f"data: {json.dumps(final_response)}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                     else:
                         # Non-streaming case
@@ -995,6 +1005,7 @@ async def regenerate_message(
                                         request.message_id,
                                         response_data["content"]
                                     )
+                                    print(f"after updating cache with new content. New cache state: {chat_history_cache.get_history(request.session_id)}")
                                     # Update message in database
                                     chat_db.update_message(request.session_id, user_id, updated_message)
                                     
