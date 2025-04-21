@@ -10,10 +10,11 @@ class MessageResponse(BaseModel):
     message_id: str
     content: str
     role: str
-    model: str
+    model: Optional[str] = None
     timestamp: datetime
-    sources: Optional[List[dict]] = None
-    metrics: Optional[dict] = None
+    created_at: Optional[datetime] = None
+    sources: Optional[List[Dict]] = None
+    metrics: Optional[Dict] = None
     isThinking: Optional[bool] = None
 
 class ChatHistoryItem(BaseModel):
@@ -21,6 +22,7 @@ class ChatHistoryItem(BaseModel):
     firstQuery: str  
     messages: List[MessageResponse]
     timestamp: datetime
+    created_at: Optional[datetime] = None
     isActive: bool = True 
 
 class ChatHistoryResponse(BaseModel):
@@ -33,7 +35,6 @@ class ErrorRequest(BaseModel):
     message_id: str
     content: str
     role: str = "assistant"
-    model: str
     timestamp: datetime = Field(default_factory=datetime.now)
     sources: Optional[List[dict]] = None
     metrics: Optional[dict] = None

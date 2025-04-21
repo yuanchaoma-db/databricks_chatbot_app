@@ -8,6 +8,7 @@ export interface Message {
   content: string;
   role: 'user' | 'assistant';
   timestamp: Date;
+  created_at?: Date;
   isThinking?: boolean;
   model?: string;
   sources?: any[] | null;

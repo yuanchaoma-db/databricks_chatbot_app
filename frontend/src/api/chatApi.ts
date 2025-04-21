@@ -111,8 +111,9 @@ export const getModel = async (): Promise<string> => {
 export const postError = async (
   sessionId: string,
   errorMessage: Message,
-): Promise<void> => {
+): Promise<{ status: string; message_id: string }> => {
   try {
+    console.log("postError: ", errorMessage);
     const response = await fetch(
       `${API_URL}/error`,
       {
@@ -134,9 +135,13 @@ export const postError = async (
 
     if (!response.ok) {
       console.error('Failed to post error to backend');
+      throw new Error('Failed to post error to backend');
     }
+
+    return await response.json();
   } catch (error) {
     console.error('Error posting error message:', error);
+    throw error;
   }
 };
 
@@ -217,7 +222,7 @@ export const postRegenerateError = async (
   sessionId: string,
   messageId: string,
   errorMessage: Message,
-): Promise<void> => {
+): Promise<{ status: string; message_id: string }> => {
   try {
     const response = await fetch(
       `${API_URL}/regenerate/error`,
@@ -240,9 +245,13 @@ export const postRegenerateError = async (
 
     if (!response.ok) {
       console.error('Failed to post regenerate error to backend');
+      throw new Error('Failed to post regenerate error to backend');
     }
+
+    return await response.json();
   } catch (error) {
     console.error('Error posting regenerate error message:', error);
+    throw error;
   }
 };
 

@@ -82,6 +82,12 @@ class ChatHistoryCache:
     def add_message(self, session_id: str, message: Dict):
         """Add a message to the cache"""
         with self.lock:
+            # Add created_at if not present
+            if 'created_at' not in message:
+                message['created_at'] = datetime.now().isoformat()
+            if 'timestamp' not in message:
+                message['timestamp'] = message['created_at']
+            
             self.cache[session_id].append(message)
             # Keep only last 10 messages
             if len(self.cache[session_id]) > 10:
@@ -94,12 +100,17 @@ class ChatHistoryCache:
                 del self.cache[session_id]
 
     def update_message(self, session_id: str, message_id: str, new_content: str):
-        """Update a message in the cache"""
+        """Update a message in the cache while preserving order"""
         with self.lock:
-            for msg in self.cache[session_id]:
+            messages = self.cache[session_id]
+            for msg in messages:
                 if msg.get('message_id') == message_id:
+                    # Preserve the original created_at and position
                     msg['content'] = new_content
+                    # Update timestamp but keep created_at
+                    msg['timestamp'] = datetime.now().isoformat()
                     break
+
 # Initialize the cache
 chat_history_cache = ChatHistoryCache()
 
@@ -181,42 +192,63 @@ request_queue = asyncio.Queue(maxsize=100)
 # Worker to process requests from the queue
 async def request_worker():
     while True:
-        fut, args, kwargs = await request_queue.get()
         try:
-            result = await make_databricks_request(*args, **kwargs)
-            fut.set_result(result)
+            fut, args, kwargs = await request_queue.get()
+            try:
+                result = await make_databricks_request(*args, **kwargs)
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception as e:
+                logger.error(f"Error in request worker: {str(e)}")
+                if not fut.done():
+                    fut.set_exception(e)
+            finally:
+                request_queue.task_done()
         except Exception as e:
-            fut.set_exception(e)
-        finally:
-            request_queue.task_done()
+            logger.error(f"Critical error in request worker: {str(e)}")
+            await asyncio.sleep(1)  # Add delay before retrying
 
 async def enqueue_request(*args, **kwargs):
     loop = asyncio.get_event_loop()
     fut = loop.create_future()
     await request_queue.put((fut, args, kwargs))
-    return await fut
+    try:
+        return await fut
+    except Exception as e:
+        logger.error(f"Error in enqueue_request: {str(e)}")
+        raise
 
 # First, modify the make_databricks_request function to include timeout
 @backoff.on_exception(
     backoff.expo,
-    (httpx.HTTPError, httpx.ReadTimeout, httpx.HTTPStatusError),  # Add HTTPStatusError to handle 429
+    (httpx.HTTPError, httpx.ReadTimeout, httpx.HTTPStatusError, RuntimeError),  # Add RuntimeError for client closed
     max_tries=3,
     max_time=30
 )
 async def make_databricks_request(client: httpx.AsyncClient, url: str, headers: dict, data: dict):
-    logger.info(f"Making Databricks request to {url}")
-    response = await client.post(url, headers=headers, json=data, timeout=30.0)
-    
-    # Handle rate limit error specifically
-    if response.status_code == 429:
-        retry_after = response.headers.get('Retry-After')
-        if retry_after:
-            wait_time = int(retry_after)
-            logger.info(f"Rate limited. Waiting {wait_time} seconds before retry.")
-            await asyncio.sleep(wait_time)
-        raise httpx.HTTPStatusError("Rate limit exceeded", request=response.request, response=response)
-    
-    return response
+    try:
+        logger.info(f"Making Databricks request to {url}")
+        if client.is_closed:
+            raise RuntimeError("Client is closed, creating new client")
+        
+        response = await client.post(url, headers=headers, json=data, timeout=30.0)
+        
+        # Handle rate limit error specifically
+        if response.status_code == 429:
+            retry_after = response.headers.get('Retry-After')
+            if retry_after:
+                wait_time = int(retry_after)
+                logger.info(f"Rate limited. Waiting {wait_time} seconds before retry.")
+                await asyncio.sleep(wait_time)
+            raise httpx.HTTPStatusError("Rate limit exceeded", request=response.request, response=response)
+        
+        return response
+    except RuntimeError as e:
+        logger.error(f"Client error: {str(e)}")
+        # Create a new client and retry
+        async with httpx.AsyncClient(timeout=30.0) as new_client:
+            response = await new_client.post(url, headers=headers, json=data, timeout=30.0)
+            return response
 
 async def extract_sources_from_trace(data: dict) -> list:
     """Extract sources from the Databricks API trace data."""
@@ -248,7 +280,6 @@ async def handle_databricks_response(
 
     if response.status_code == 200:
         data = response.json()
-        print(f"Data: {data}")
         sources = await extract_sources_from_trace(data)
 
         if not data:
@@ -290,20 +321,56 @@ async def error(
     user_info: dict = Depends(get_user_info)
 ):
     user_id = user_info["user_id"]
-    # Create error message response
-    error_message = MessageResponse(
-        message_id=error.message_id,
-        content=error.content,
-        role=error.role,
-        model=SERVING_ENDPOINT_NAME,
-        timestamp=error.timestamp,
-        sources=error.sources,
-        metrics=error.metrics
-    )
     
-    # Save to session
-    chat_db.save_message_to_session(error.session_id, user_id, error_message)
-    return {"status": "error saved"}
+    # Get the chat session from database
+    chat_data = chat_db.get_chat(error.session_id, user_id)
+    if not chat_data:
+        logger.error(f"Session {error.session_id} not found in database")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Chat session {error.session_id} not found. Please ensure you're using a valid session ID."
+        )
+    
+    # Check if this is a new error message or updating an existing one
+    is_new_error = not any(msg.message_id == error.message_id for msg in chat_data.messages)
+    
+    if is_new_error:
+        # Create new error message
+        error_message = MessageResponse(
+            message_id=str(uuid.uuid4()),  # Generate new ID for new error
+            content=error.content,
+            role=error.role,
+            model=SERVING_ENDPOINT_NAME,
+            timestamp=error.timestamp,
+            sources=error.sources,
+            metrics=error.metrics
+        )
+        # Save new error message to database
+        chat_db.save_message_to_session(error.session_id, user_id, error_message)
+        # Add to cache
+        chat_history_cache.add_message(error.session_id, {
+            "role": error.role,
+            "content": error.content,
+            "message_id": error_message.message_id,
+            "timestamp": error.timestamp
+        })
+    else:
+        # Update existing message
+        error_message = MessageResponse(
+            message_id=error.message_id,  # Use existing message ID
+            content=error.content,
+            role=error.role,
+            model=SERVING_ENDPOINT_NAME,
+            timestamp=error.timestamp,
+            sources=error.sources,
+            metrics=error.metrics
+        )
+        # Update message in database
+        chat_db.update_message(error.session_id, user_id, error_message)
+        # Update in cache
+        chat_history_cache.update_message(error.session_id, error.message_id, error.content)
+    
+    return {"status": "error saved", "message_id": error_message.message_id}
 
 @api_app.get("/model")
 async def get_model():
@@ -342,7 +409,8 @@ async def chat(
             content=message.content,
             role="user",
             model=SERVING_ENDPOINT_NAME,
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            created_at=datetime.now()
         )
         chat_db.save_message_to_session(
             message.session_id,
@@ -356,7 +424,8 @@ async def chat(
         chat_history_cache.add_message(message.session_id, {
             "role": "user",
             "content": message.content,
-            "message_id": user_message.message_id
+            "message_id": user_message.message_id,
+            "created_at": user_message.timestamp
         })
 
         async def generate():
@@ -393,8 +462,9 @@ async def chat(
                         )
                         success, response_data = await handle_databricks_response(response, start_time)
                         if success and response_data:
+                            assistant_message_id = str(uuid.uuid4())
                             assistant_message = MessageResponse(
-                                message_id=str(uuid.uuid4()),
+                                message_id=assistant_message_id,
                                 content=response_data["content"],
                                 role="assistant",
                                 model=SERVING_ENDPOINT_NAME,
@@ -408,10 +478,12 @@ async def chat(
                             chat_history_cache.add_message(message.session_id, {
                                 "role": "assistant",
                                 "content": response_data["content"],
-                                "message_id": assistant_message.message_id
+                                "message_id": assistant_message_id,
+                                "created_at": assistant_message.timestamp
                             })
                             
-                            yield f"data: {json.dumps(response_data)}\n\n"
+                            # Include message_id in response_data
+                            yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
                             yield "event: done\ndata: {}\n\n"
                 
                         else:
@@ -424,7 +496,7 @@ async def chat(
                                 'metrics': None
                             }
                             
-                            assistant_message = MessageResponse(
+                            error_message = MessageResponse(
                                 message_id=error_message_id,
                                 content=error_response["content"],
                                 role="assistant",
@@ -433,13 +505,19 @@ async def chat(
                                 sources=error_response.get("sources"),
                                 metrics=error_response.get("metrics")
                             )
-                            chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                            yield f"data: {json.dumps(error_response)}\n\n"
+                            chat_history_cache.add_message(message.session_id, {
+                                "role": "assistant",
+                                "content": error_response["content"],
+                                "message_id": error_message_id,
+                                "created_at": datetime.now()
+                            })
+                            chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                            yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                             yield "event: done\ndata: {}\n\n"
                     except Exception as e:
                         logger.error(f"Error in non-streaming response: {str(e)}")
                         error_message_id = str(uuid.uuid4())
-                        assistant_message = MessageResponse(
+                        error_message = MessageResponse(
                             message_id=error_message_id,
                             content="Request timed out. Please try again later.",
                             role="assistant",
@@ -448,8 +526,17 @@ async def chat(
                             sources=[],
                             metrics=None
                         )
-                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                        yield f"data: {json.dumps({'message_id': error_message_id,'content': 'Failed to process response from model', 'metrics': None})}\n\n"
+                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                        
+                        # Add error message to cache
+                        chat_history_cache.add_message(message.session_id, {
+                            "role": "assistant",
+                            "content": "Request timed out. Please try again later.",
+                            "message_id": error_message_id,
+                            "created_at": datetime.now()
+                        })
+                        
+                        yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                         yield "event: done\ndata: {}\n\n"
             else:
                 async with streaming_semaphore:
@@ -531,7 +618,6 @@ async def chat(
                                             'supports_trace': supports_trace,
                                             'last_checked': datetime.now()
                                         }
-                                        yield f"data: {assistant_message.model_dump_json()}\n\n"
                                         yield "event: done\ndata: {}\n\n"
                                 else:
                                     raise Exception("Streaming not supported")
@@ -599,7 +685,7 @@ async def chat(
                                             "message_id": assistant_message.message_id
                                         })
                                         
-                                        yield f"data: {json.dumps(response_data)}\n\n"
+                                        yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
                                         yield "event: done\ndata: {}\n\n"
                                     else:
                                         logger.error("Failed to process Databricks response")
@@ -610,7 +696,7 @@ async def chat(
                                             'sources': [],
                                             'metrics': None
                                         }
-                                        assistant_message = MessageResponse(
+                                        error_message = MessageResponse(
                                             message_id=error_message_id,
                                             content=error_response["content"],
                                             role="assistant",
@@ -619,23 +705,39 @@ async def chat(
                                             sources=error_response.get("sources"),
                                             metrics=error_response.get("metrics")
                                         )
-                                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                        yield f"data: {json.dumps(error_response)}\n\n"
+                                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                                        
+                                        # Add error message to cache with the original message ID
+                                        chat_history_cache.add_message(message.session_id, {
+                                            "role": "assistant",
+                                            "content": error_response["content"],
+                                            "message_id": error_message_id
+                                        })
+                                        
+                                        yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                                         yield "event: done\ndata: {}\n\n"
                                 except httpx.ReadTimeout as timeout_error:
                                     logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
                                     error_message_id = str(uuid.uuid4())
-                                    assistant_message = MessageResponse(
-                                            message_id=error_message_id,
-                                            content="Request timed out. Please try again later.",
-                                            role="assistant",
-                                            model=SERVING_ENDPOINT_NAME,
-                                            timestamp=datetime.now(),
-                                            sources=[],
-                                            metrics={"totalTime": time.time() - start_time}
-                                        )
-                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                    yield f"data: {json.dumps({'message_id': error_message_id,'content': 'Request timed out. Please try again later.'})}\n\n"
+                                    error_message = MessageResponse(
+                                        message_id=error_message_id,
+                                        content="Request timed out. Please try again later.",
+                                        role="assistant",
+                                        model=SERVING_ENDPOINT_NAME,
+                                        timestamp=datetime.now(),
+                                        sources=[],
+                                        metrics={"totalTime": time.time() - start_time}
+                                    )
+                                    chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                                    
+                                    # Add error message to cache with the original message ID
+                                    chat_history_cache.add_message(message.session_id, {
+                                        "role": "assistant",
+                                        "content": "Request timed out. Please try again later.",
+                                        "message_id": error_message_id
+                                    })
+                                    
+                                    yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                                     yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
@@ -664,7 +766,7 @@ async def chat(
             'timestamp': datetime.now().isoformat()
         }
         
-        assistant_message = MessageResponse(
+        error_message = MessageResponse(
             message_id=error_message_id,
             content=error_response["content"],
             role="assistant",
@@ -673,10 +775,16 @@ async def chat(
             sources=error_response.get("sources"),
             metrics=error_response.get("metrics")
         )
-        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+        chat_history_cache.add_message(message.session_id, {
+            "role": "assistant",
+            "content": error_response["content"],
+            "message_id": error_message_id,
+            "created_at": datetime.now()
+        })
+        chat_db.save_message_to_session(message.session_id, user_id, error_message)
         
         async def error_generate():
-            yield f"data: {json.dumps(error_response)}\n\n"
+            yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
             yield "event: done\ndata: {}\n\n"
             
         return StreamingResponse(
@@ -729,6 +837,7 @@ async def regenerate_message(
         user_id = user_info["user_id"]
         # Get chat history from cache
         chat_history = chat_history_cache.get_history(request.session_id)
+        logger.info(f"Initial cache state for session {request.session_id}: {chat_history}")
         
         # If cache is empty, load from database
         if not chat_history:
@@ -740,6 +849,7 @@ async def regenerate_message(
                 ]
                 for msg in chat_history:
                     chat_history_cache.add_message(request.session_id, msg)
+                logger.info(f"Loaded history from database into cache: {chat_history}")
 
         # Find the message to regenerate in the history
         message_index = next(
@@ -754,6 +864,14 @@ async def regenerate_message(
                 status_code=404, 
                 detail=f"Message {request.message_id} not found in chat session {request.session_id}."
             )
+
+        # Get the original message's timestamp
+        original_message = chat_history[message_index]
+        logger.info(f"Found message to regenerate: {original_message}")
+        original_timestamp = original_message.get('timestamp')
+        print("original_timestamp=", original_timestamp)
+        if not original_timestamp:
+            original_timestamp = datetime.now().isoformat()
 
         # Get history up to the message being regenerated
         history_up_to_message = chat_history[:message_index]
@@ -801,7 +919,7 @@ async def regenerate_message(
                                                     # Extract sources if this is the final message containing databricks_output
                                                     if 'databricks_output' in data:
                                                         sources = await extract_sources_from_trace(data)
-                                                        
+                                                    
                                                     if content:
                                                         accumulated_content += content
                                                         current_time = time.time()
@@ -812,7 +930,8 @@ async def regenerate_message(
                                                             'metrics': {
                                                                 'timeToFirstToken': ttft,
                                                                 'totalTime': current_time - start_time
-                                                            }
+                                                            },
+                                                            'timestamp': original_timestamp
                                                         }
                                                         yield f"data: {json.dumps(response_data)}\n\n"
                                             except json.JSONDecodeError:
@@ -825,17 +944,13 @@ async def regenerate_message(
                                         content=accumulated_content,
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
-                                        timestamp=datetime.now(),
+                                        timestamp=original_timestamp,
                                         sources=sources,
                                         metrics={
                                             "timeToFirstToken": ttft,
                                             "totalTime": total_time
                                         }
                                     )
-                                    
-                                    # Update message in database
-                                    chat_db.update_message(request.session_id, user_id, updated_message)
-                                    
                                     # Update message in cache
                                     chat_history_cache.update_message(
                                         request.session_id,
@@ -843,8 +958,9 @@ async def regenerate_message(
                                         accumulated_content
                                     )
                                     
-                                    # Send final metrics
-                                    yield f"data: {updated_message.model_dump_json()}\n\n"
+                                    # Update message in database
+                                    chat_db.update_message(request.session_id, user_id, updated_message)
+                                    
                                     yield "event: done\ndata: {}\n\n"
                     else:
                         # Non-streaming case
@@ -867,24 +983,25 @@ async def regenerate_message(
                                         content=response_data["content"],
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
-                                        timestamp=datetime.now(),
+                                        timestamp=original_timestamp,
                                         sources=response_data.get("sources", []),
                                         metrics={
                                             "totalTime": total_time
                                         }
                                     )
-                                    
-                                    # Update message in database
-                                    chat_db.update_message(request.session_id, user_id, updated_message)
-                                    
                                     # Update message in cache
                                     chat_history_cache.update_message(
                                         request.session_id,
                                         request.message_id,
                                         response_data["content"]
                                     )
+                                    # Update message in database
+                                    chat_db.update_message(request.session_id, user_id, updated_message)
                                     
-                                    yield f"data: {json.dumps({**response_data, 'message_id': request.message_id})}\n\n"
+                                    # Include original timestamp in response
+                                    response_data["timestamp"] = original_timestamp
+                                    response_data["message_id"] = request.message_id
+                                    yield f"data: {updated_message.model_dump_json()}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                     
             except Exception as e:
@@ -895,7 +1012,7 @@ async def regenerate_message(
                     "content": "Failed to regenerate response. Please try again.",
                     "sources": [],
                     "metrics": None,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": original_timestamp
                 }
                 
                 error_message = MessageResponse(
@@ -903,16 +1020,17 @@ async def regenerate_message(
                     content=error_response["content"],
                     role="assistant",
                     model=SERVING_ENDPOINT_NAME,
-                    timestamp=datetime.now(),
+                    timestamp=original_timestamp,
                     sources=[],
                     metrics=None
                 )
+                # Update error message in cache
+                chat_history_cache.update_message(request.session_id, request.message_id, error_response["content"])
                 
                 # Update error message in database
                 chat_db.update_message(request.session_id, user_id, error_message)
                 
-                
-                yield f"data: {json.dumps(error_response)}\n\n"
+                yield f"data: {error_message.model_dump_json()}\n\n"
                 yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
@@ -947,21 +1065,47 @@ async def regenerate_error(
                 detail=f"Chat session {error.session_id} not found. Please ensure you're using a valid session ID."
             )
         
-        # Create error message response
-        error_message = MessageResponse(
-            message_id=error.message_id,
-            content=error.content,
-            role=error.role,
-            model=SERVING_ENDPOINT_NAME,
-            timestamp=error.timestamp,
-            sources=error.sources,
-            metrics=error.metrics
-        )
+        # Check if this is a new error message or updating an existing one
+        is_new_error = not any(msg.message_id == error.message_id for msg in chat_data.messages)
         
-        # Update error message in database
-        chat_db.update_message(error.session_id, user_id, error_message)
+        if is_new_error:
+            # Create new error message
+            error_message = MessageResponse(
+                message_id=str(uuid.uuid4()),  # Generate new ID for new error
+                content=error.content,
+                role=error.role,
+                model=SERVING_ENDPOINT_NAME,
+                timestamp=error.timestamp,
+                sources=error.sources,
+                metrics=error.metrics
+            )
+            # Save new error message to database
+            chat_db.save_message_to_session(error.session_id, user_id, error_message)
+            # Add to cache
+            chat_history_cache.add_message(error.session_id, {
+                "role": error.role,
+                "content": error.content,
+                "message_id": error_message.message_id,
+                "timestamp": error.timestamp
+            })
+            
+        else:
+            # Update existing message
+            error_message = MessageResponse(
+                message_id=error.message_id,  # Use existing message ID
+                content=error.content,
+                role=error.role,
+                model=SERVING_ENDPOINT_NAME,
+                timestamp=error.timestamp,
+                sources=error.sources,
+                metrics=error.metrics
+            )
+            # Update message in database
+            chat_db.update_message(error.session_id, user_id, error_message)
+            # Update in cache
+            chat_history_cache.update_message(error.session_id, error.message_id, error.content)
         
-        return {"status": "error saved"}
+        return {"status": "error saved", "message_id": error_message.message_id}
         
     except Exception as e:
         logger.error(f"Error in regenerate_error endpoint: {str(e)}")

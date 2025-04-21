@@ -377,7 +377,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  console.log(`Message Inside ChatMessage=====>: ${message.content.slice(0, 10)} ${message.message_id}`);
+  console.log(`Message Inside ChatMessage and message.message_id=====>: ${message.content.slice(0, 10)} ${message.message_id}`);
   const currentRating = messageRatings[message.message_id];
 
   const handleCopy = async () => {

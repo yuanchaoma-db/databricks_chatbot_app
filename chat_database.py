@@ -214,20 +214,20 @@ class ChatDatabase:
                     cursor.execute('''
                     SELECT s.session_id, s.first_query, s.timestamp, s.is_active,
                            m.message_id, m.content, m.role, m.model, m.timestamp as message_timestamp,
-                           m.sources, m.metrics
+                           m.sources, m.metrics, m.created_at
                     FROM sessions s
                     LEFT JOIN messages m ON s.session_id = m.session_id and m.user_id = s.user_id
                     WHERE s.user_id = ?
-                    ORDER BY s.timestamp DESC, m.timestamp ASC
+                    ORDER BY s.created_at DESC, m.created_at ASC
                     ''', (user_id,))
                 else:
                     cursor.execute('''
                     SELECT s.session_id, s.first_query, s.timestamp, s.is_active,
                            m.message_id, m.content, m.role, m.model, m.timestamp as message_timestamp,
-                           m.sources, m.metrics
+                           m.sources, m.metrics, m.created_at
                     FROM sessions s
                     LEFT JOIN messages m ON s.session_id = m.session_id and m.user_id = s.user_id
-                    ORDER BY s.timestamp DESC, m.timestamp ASC
+                    ORDER BY s.created_at DESC, m.created_at ASC
                     ''')
                 
                 sessions = {}
@@ -249,13 +249,14 @@ class ChatDatabase:
                             role=row['role'],
                             model=row['model'],
                             timestamp=datetime.fromisoformat(row['message_timestamp']),
+                            created_at=datetime.fromisoformat(row['created_at']),
                             sources=json.loads(row['sources']) if row['sources'] else None,
                             metrics=json.loads(row['metrics']) if row['metrics'] else None
                         ))
                 
-                # Sort messages by timestamp for each session
+                # Sort messages by created_at for each session
                 for session in sessions.values():
-                    session.messages.sort(key=lambda x: x.timestamp)
+                    session.messages.sort(key=lambda x: x.created_at)
                 
                 return ChatHistoryResponse(sessions=list(sessions.values()))
             except sqlite3.Error as e:
@@ -276,13 +277,13 @@ class ChatDatabase:
                 # Get session info with user check
                 if user_id:
                     cursor.execute('''
-                    SELECT first_query, timestamp, is_active
+                    SELECT first_query, timestamp, is_active, created_at
                     FROM sessions
                     WHERE session_id = ? AND user_id = ?
                     ''', (session_id, user_id))
                 else:
                     cursor.execute('''
-                    SELECT first_query, timestamp, is_active
+                    SELECT first_query, timestamp, is_active, created_at
                     FROM sessions
                     WHERE session_id = ?
                     ''', (session_id,))
@@ -292,12 +293,12 @@ class ChatDatabase:
                     logger.error(f"Session not found: session_id={session_id}, user_id={user_id}")
                     raise HTTPException(status_code=404, detail="Chat not found")
                 
-                # Get messages
+                # Get messages ordered by created_at
                 cursor.execute('''
-                SELECT message_id, content, role, model, timestamp, sources, metrics, user_id
+                SELECT message_id, content, role, model, timestamp, sources, metrics, user_id, created_at
                 FROM messages
                 WHERE session_id = ? and user_id = ?
-                ORDER BY timestamp ASC
+                ORDER BY created_at ASC
                 ''', (session_id, user_id))
                 
                 messages = []
@@ -309,6 +310,7 @@ class ChatDatabase:
                         role=row['role'],
                         model=row['model'],
                         timestamp=datetime.fromisoformat(row['timestamp']),
+                        created_at=datetime.fromisoformat(row['created_at']),
                         sources=json.loads(row['sources']) if row['sources'] else None,
                         metrics=json.loads(row['metrics']) if row['metrics'] else None
                     ))
@@ -318,6 +320,7 @@ class ChatDatabase:
                     firstQuery=session_data['first_query'],
                     messages=messages,
                     timestamp=datetime.fromisoformat(session_data['timestamp']),
+                    created_at=datetime.fromisoformat(session_data['created_at']),
                     isActive=bool(session_data['is_active'])
                 )
             except sqlite3.Error as e:

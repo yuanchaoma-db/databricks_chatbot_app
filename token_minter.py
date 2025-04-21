@@ -2,6 +2,10 @@ import requests
 import threading
 from datetime import datetime, timedelta
 import logging
+import os
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 logger = logging.getLogger(__name__)
 
 class TokenMinter:
@@ -51,3 +55,4 @@ class TokenMinter:
             if not self.token or not self.expiry_time or datetime.now() + timedelta(minutes=5) >= self.expiry_time:
                 self._refresh_token()
             return self.token
+

@@ -131,7 +131,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
             : msg
         ));
       });
-
+      
       const botMessage: Message = {
         message_id: messageId,
         content: accumulatedContent,
@@ -151,24 +151,35 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       console.error('Error sending message:', error);
       setError('Failed to send message. Please try again.');
       
+      // Create error message with proper message_id
+      const errorMessageId = uuid();
+      const errorMessage: Message = { 
+        message_id: errorMessageId,
+        content: 'Sorry, I encountered an error. Please try again.',
+        role: 'assistant',
+        timestamp: new Date(),
+        isThinking: false,
+        model: model
+      };
+      
       // Keep the user message but update the thinking message to show error
       setMessages(prev => prev.map(msg => 
         msg.message_id === thinkingMessage.message_id 
-          ? {
-              ...msg,
-              content: 'Sorry, I encountered an error. Please try again.',
-              isThinking: false,
-              model: model
-            }
+          ? errorMessage
           : msg
       ));
-
+      
+      // Sync error message with backend
       if (currentSessionId) {
-        await postError(currentSessionId, {
-          ...thinkingMessage,
-          content: 'Sorry, I encountered an error. Please try again.',
-          isThinking: false
-        });
+        const response = await postError(currentSessionId, errorMessage);
+        if (response.message_id) {
+          // Update the message with the new message_id from backend
+          setMessages(prev => prev.map(msg => 
+            msg.message_id === errorMessageId 
+              ? { ...msg, message_id: response.message_id }
+              : msg
+          ));
+        }
       }
     } finally {
       try {
@@ -228,7 +239,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     console.log('Current session ID:', currentSessionId);
     
     const messageIndex = messages.findIndex(msg => msg.message_id === messageId);
-    if (messageIndex === -1) return;
+    if (messageIndex === -1) {
+      console.error('Message not found:', messageId);
+      setError('Cannot regenerate message: message not found.');
+      return;
+    }
 
     const previousUserMessage = [...messages]
       .slice(0, messageIndex)
@@ -337,9 +352,17 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         }
         return updatedMessages;
       });
-
-      if (currentSessionId && messageId) {
-        await postRegenerateError(currentSessionId, messageId, errorMessage);
+      console.log('error message:', errorMessage);
+      if (currentSessionId) {
+        const response = await postRegenerateError(currentSessionId, messageId, errorMessage);
+        if (response.message_id && response.message_id !== messageId) {
+          // Update the message with the new message_id from backend if it changed
+          setMessages(prev => prev.map(msg => 
+            msg.message_id === messageId 
+              ? { ...msg, message_id: response.message_id }
+              : msg
+          ));
+        }
       }
     } finally {
       try {
