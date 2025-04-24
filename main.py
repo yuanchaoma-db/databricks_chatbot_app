@@ -221,34 +221,33 @@ async def enqueue_request(*args, **kwargs):
 # First, modify the make_databricks_request function to include timeout
 @backoff.on_exception(
     backoff.expo,
-    (httpx.HTTPError, httpx.ReadTimeout, httpx.HTTPStatusError, RuntimeError),  # Add RuntimeError for client closed
-    max_tries=3,
-    max_time=30
+    (httpx.HTTPError, httpx.ReadTimeout, httpx.HTTPStatusError, RuntimeError),
+    max_tries=5,  
+    max_time=120,  
+    base=4,
+    jitter=backoff.full_jitter,
 )
-async def make_databricks_request(client: httpx.AsyncClient, url: str, headers: dict, data: dict):
+async def make_databricks_request(url: str, headers: dict, data: dict):
     try:
         logger.info(f"Making Databricks request to {url}")
-        if client.is_closed:
-            raise RuntimeError("Client is closed, creating new client")
         
-        response = await client.post(url, headers=headers, json=data, timeout=30.0)
-        
-        # Handle rate limit error specifically
-        if response.status_code == 429:
-            retry_after = response.headers.get('Retry-After')
-            if retry_after:
-                wait_time = int(retry_after)
-                logger.info(f"Rate limited. Waiting {wait_time} seconds before retry.")
-                await asyncio.sleep(wait_time)
-            raise httpx.HTTPStatusError("Rate limit exceeded", request=response.request, response=response)
-        
-        return response
-    except RuntimeError as e:
-        logger.error(f"Client error: {str(e)}")
-        # Create a new client and retry
+        # Create a new client for each attempt to ensure fresh connection
         async with httpx.AsyncClient(timeout=30.0) as new_client:
             response = await new_client.post(url, headers=headers, json=data, timeout=30.0)
+            
+            # Handle rate limit error specifically
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After')
+                if retry_after:
+                    wait_time = int(retry_after)
+                    logger.info(f"Rate limited. Waiting {wait_time} seconds before retry.")
+                    await asyncio.sleep(wait_time)
+                raise httpx.HTTPStatusError("Rate limit exceeded", request=response.request, response=response)
             return response
+            
+    except Exception as e:
+        logger.error(f"Request failed: {str(e)}")
+        raise  # Re-raise the exception to trigger backoff
 
 async def extract_sources_from_trace(data: dict) -> list:
     """Extract sources from the Databricks API trace data."""
@@ -450,94 +449,92 @@ async def chat(
                 request_data["databricks_options"] = {"return_trace": True}
 
             if not supports_streaming:
-                async with httpx.AsyncClient(timeout=regular_timeout) as regular_client:
-                    try:
-                        logger.info("non Streaming is running")
-                        start_time = time.time()
-                        response = await enqueue_request(
-                            regular_client,
-                            f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
-                            headers=headers,
-                            data=request_data
-                        )
-                        success, response_data = await handle_databricks_response(response, start_time)
-                        if success and response_data:
-                            assistant_message_id = str(uuid.uuid4())
-                            assistant_message = MessageResponse(
-                                message_id=assistant_message_id,
-                                content=response_data["content"],
-                                role="assistant",
-                                model=SERVING_ENDPOINT_NAME,
-                                timestamp=datetime.now(),
-                                sources=response_data.get("sources"),
-                                metrics=response_data.get("metrics")
-                            )
-                            chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                            
-                            # Add assistant message to cache
-                            chat_history_cache.add_message(message.session_id, {
-                                "role": "assistant",
-                                "content": response_data["content"],
-                                "message_id": assistant_message_id,
-                                "created_at": assistant_message.timestamp
-                            })
-                            
-                            # Include message_id in response_data
-                            yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
-                            yield "event: done\ndata: {}\n\n"
-                
-                        else:
-                            logger.error("Failed to process Databricks response")
-                            error_message_id = str(uuid.uuid4())
-                            error_response = {
-                                'message_id': error_message_id,
-                                'content': 'Failed to process response from model',
-                                'sources': [],
-                                'metrics': None
-                            }
-                            
-                            error_message = MessageResponse(
-                                message_id=error_message_id,
-                                content=error_response["content"],
-                                role="assistant",
-                                model=SERVING_ENDPOINT_NAME,
-                                timestamp=datetime.now(),
-                                sources=error_response.get("sources"),
-                                metrics=error_response.get("metrics")
-                            )
-                            chat_history_cache.add_message(message.session_id, {
-                                "role": "assistant",
-                                "content": error_response["content"],
-                                "message_id": error_message_id,
-                                "created_at": datetime.now()
-                            })
-                            chat_db.save_message_to_session(message.session_id, user_id, error_message)
-                            yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
-                            yield "event: done\ndata: {}\n\n"
-                    except Exception as e:
-                        logger.error(f"Error in non-streaming response: {str(e)}")
-                        error_message_id = str(uuid.uuid4())
-                        error_message = MessageResponse(
-                            message_id=error_message_id,
-                            content="Request timed out. Please try again later.",
+                try:
+                    logger.info("non Streaming is running")
+                    start_time = time.time()
+                    response = await enqueue_request(
+                        f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
+                        headers=headers,
+                        data=request_data
+                    )
+                    success, response_data = await handle_databricks_response(response, start_time)
+                    if success and response_data:
+                        assistant_message_id = str(uuid.uuid4())
+                        assistant_message = MessageResponse(
+                            message_id=assistant_message_id,
+                            content=response_data["content"],
                             role="assistant",
                             model=SERVING_ENDPOINT_NAME,
                             timestamp=datetime.now(),
-                            sources=[],
-                            metrics=None
+                            sources=response_data.get("sources"),
+                            metrics=response_data.get("metrics")
                         )
-                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                         
-                        # Add error message to cache
+                        # Add assistant message to cache
                         chat_history_cache.add_message(message.session_id, {
                             "role": "assistant",
-                            "content": "Request timed out. Please try again later.",
+                            "content": response_data["content"],
+                            "message_id": assistant_message_id,
+                            "created_at": assistant_message.timestamp
+                        })
+                        
+                        # Include message_id in response_data
+                        yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
+                        yield "event: done\ndata: {}\n\n"
+            
+                    else:
+                        logger.error("Failed to process Databricks response")
+                        error_message_id = str(uuid.uuid4())
+                        error_response = {
+                            'message_id': error_message_id,
+                            'content': 'Failed to process response from model',
+                            'sources': [],
+                            'metrics': None
+                        }
+                        
+                        error_message = MessageResponse(
+                            message_id=error_message_id,
+                            content=error_response["content"],
+                            role="assistant",
+                            model=SERVING_ENDPOINT_NAME,
+                            timestamp=datetime.now(),
+                            sources=error_response.get("sources"),
+                            metrics=error_response.get("metrics")
+                        )
+                        chat_history_cache.add_message(message.session_id, {
+                            "role": "assistant",
+                            "content": error_response["content"],
                             "message_id": error_message_id,
                             "created_at": datetime.now()
                         })
-                        
+                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
                         yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                         yield "event: done\ndata: {}\n\n"
+                except Exception as e:
+                    logger.error(f"Error in non-streaming response: {str(e)}")
+                    error_message_id = str(uuid.uuid4())
+                    error_message = MessageResponse(
+                        message_id=error_message_id,
+                        content="Request timed out. Please try again later.",
+                        role="assistant",
+                        model=SERVING_ENDPOINT_NAME,
+                        timestamp=datetime.now(),
+                        sources=[],
+                        metrics=None
+                    )
+                    chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                    
+                    # Add error message to cache
+                    chat_history_cache.add_message(message.session_id, {
+                        "role": "assistant",
+                        "content": "Request timed out. Please try again later.",
+                        "message_id": error_message_id,
+                        "created_at": datetime.now()
+                    })
+                    
+                    yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
+                    yield "event: done\ndata: {}\n\n"
             else:
                 async with streaming_semaphore:
                     async with httpx.AsyncClient(timeout=streaming_timeout) as streaming_client:
@@ -635,116 +632,94 @@ async def chat(
                                     'supports_streaming': False,
                                     'last_checked': datetime.now()
                                 })
-                            
-                            # Force a delay before fallback to ensure previous connection is terminated
-                            await asyncio.sleep(1)
-                            
-                            # Use a fresh timeout for the fallback
-                            fallback_timeout = httpx.Timeout(
-                                connect=10.0,
-                                read=60.0,
-                                write=10.0,
-                                pool=10.0
-                            )
-                            
-                            # Only for this fallback request, create a transport with connection pooling disabled
-                            fallback_transport = httpx.AsyncHTTPTransport(
-                                retries=3,
-                                limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
-                            )
-                            
-                            async with httpx.AsyncClient(
-                                timeout=fallback_timeout,
-                                transport=fallback_transport
-                            ) as fallback_client:
-                                try:
-                                    # Reset start time for fallback
-                                    start_time = time.time()
-                                    # Ensure stream is set to False
-                                    request_data["stream"] = False
-                                    # Add a random query parameter to avoid any caching
-                                    url = f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations?nocache={uuid.uuid4()}"
-                                    logger.info(f"Making fallback request with fresh connection to {url}")
-                                    
-                                    # Make direct request instead of using make_databricks_request
-                                    response = await enqueue_request(fallback_client, url, headers, request_data)
-                                    
-                                    # Process the response
-                                    success, response_data = await handle_databricks_response(response, start_time)
-                                    if success and response_data:
-                                        # Save assistant message to session
-                                        assistant_message = MessageResponse(
-                                            message_id=str(uuid.uuid4()),
-                                            content=response_data["content"],
-                                            role="assistant",
-                                            model=SERVING_ENDPOINT_NAME,
-                                            timestamp=datetime.now(),
-                                            sources=response_data.get("sources"),
-                                            metrics=response_data.get("metrics")
-                                        )
-                                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                        
-                                        # Add assistant message to cache
-                                        chat_history_cache.add_message(message.session_id, {
-                                            "role": "assistant",
-                                            "content": response_data["content"],
-                                            "message_id": assistant_message.message_id
-                                        })
-                                        
-                                        yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
-                                        yield "event: done\ndata: {}\n\n"
-                                    else:
-                                        logger.error("Failed to process Databricks response")
-                                        error_message_id = str(uuid.uuid4())
-                                        error_response = {
-                                            'message_id': error_message_id,
-                                            'content': 'Failed to process response from model',
-                                            'sources': [],
-                                            'metrics': None
-                                        }
-                                        error_message = MessageResponse(
-                                            message_id=error_message_id,
-                                            content=error_response["content"],
-                                            role="assistant",
-                                            model=SERVING_ENDPOINT_NAME,
-                                            timestamp=datetime.now(),
-                                            sources=error_response.get("sources"),
-                                            metrics=error_response.get("metrics")
-                                        )
-                                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
-                                        
-                                        # Add error message to cache with the original message ID
-                                        chat_history_cache.add_message(message.session_id, {
-                                            "role": "assistant",
-                                            "content": error_response["content"],
-                                            "message_id": error_message_id
-                                        })
-                                        
-                                        yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
-                                        yield "event: done\ndata: {}\n\n"
-                                except httpx.ReadTimeout as timeout_error:
-                                    logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
-                                    error_message_id = str(uuid.uuid4())
-                                    error_message = MessageResponse(
-                                        message_id=error_message_id,
-                                        content="Request timed out. Please try again later.",
+                            try:
+                                # Reset start time for fallback
+                                start_time = time.time()
+                                # Ensure stream is set to False
+                                request_data["stream"] = False
+                                # Add a random query parameter to avoid any caching
+                                url = f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations?nocache={uuid.uuid4()}"
+                                logger.info(f"Making fallback request with fresh connection to {url}")
+                                
+                                # Make direct request instead of using make_databricks_request
+                                response = await enqueue_request(url, headers, request_data)
+                                
+                                # Process the response
+                                success, response_data = await handle_databricks_response(response, start_time)
+                                if success and response_data:
+                                    # Save assistant message to session
+                                    assistant_message = MessageResponse(
+                                        message_id=str(uuid.uuid4()),
+                                        content=response_data["content"],
                                         role="assistant",
                                         model=SERVING_ENDPOINT_NAME,
                                         timestamp=datetime.now(),
-                                        sources=[],
-                                        metrics={"totalTime": time.time() - start_time}
+                                        sources=response_data.get("sources"),
+                                        metrics=response_data.get("metrics")
+                                    )
+                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                                    
+                                    # Add assistant message to cache
+                                    chat_history_cache.add_message(message.session_id, {
+                                        "role": "assistant",
+                                        "content": response_data["content"],
+                                        "message_id": assistant_message.message_id
+                                    })
+                                    
+                                    yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
+                                    yield "event: done\ndata: {}\n\n"
+                                else:
+                                    logger.error("Failed to process Databricks response")
+                                    error_message_id = str(uuid.uuid4())
+                                    error_response = {
+                                        'message_id': error_message_id,
+                                        'content': 'Failed to process response from model',
+                                        'sources': [],
+                                        'metrics': None
+                                    }
+                                    error_message = MessageResponse(
+                                        message_id=error_message_id,
+                                        content=error_response["content"],
+                                        role="assistant",
+                                        model=SERVING_ENDPOINT_NAME,
+                                        timestamp=datetime.now(),
+                                        sources=error_response.get("sources"),
+                                        metrics=error_response.get("metrics")
                                     )
                                     chat_db.save_message_to_session(message.session_id, user_id, error_message)
                                     
                                     # Add error message to cache with the original message ID
                                     chat_history_cache.add_message(message.session_id, {
                                         "role": "assistant",
-                                        "content": "Request timed out. Please try again later.",
+                                        "content": error_response["content"],
                                         "message_id": error_message_id
                                     })
                                     
                                     yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                                     yield "event: done\ndata: {}\n\n"
+                            except httpx.ReadTimeout as timeout_error:
+                                logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
+                                error_message_id = str(uuid.uuid4())
+                                error_message = MessageResponse(
+                                    message_id=error_message_id,
+                                    content="Request timed out. Please try again later.",
+                                    role="assistant",
+                                    model=SERVING_ENDPOINT_NAME,
+                                    timestamp=datetime.now(),
+                                    sources=[],
+                                    metrics={"totalTime": time.time() - start_time}
+                                )
+                                chat_db.save_message_to_session(message.session_id, user_id, error_message)
+                                
+                                # Add error message to cache with the original message ID
+                                chat_history_cache.add_message(message.session_id, {
+                                    "role": "assistant",
+                                    "content": "Request timed out. Please try again later.",
+                                    "message_id": error_message_id
+                                })
+                                
+                                yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
+                                yield "event: done\ndata: {}\n\n"
 
         return StreamingResponse(
             generate(),
@@ -973,47 +948,35 @@ async def regenerate_message(
                                     yield f"data: {json.dumps(final_response)}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                     else:
-                        # Non-streaming case
-                        regen_transport = httpx.AsyncHTTPTransport(
-                            retries=3,
-                            limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
-                        )
-                        async with streaming_semaphore:
-                            async with httpx.AsyncClient(
-                                timeout=timeout,
-                                transport=regen_transport
-                            ) as client:
-                                response = await enqueue_request(client, f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations", headers, request_data)
+                        response = await enqueue_request(f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations", headers, request_data)
+                        success, response_data = await handle_databricks_response(response, start_time)
+                        if success and response_data:
+                            total_time = time.time() - start_time
+                            updated_message = MessageResponse(
+                                message_id=request.message_id,
+                                content=response_data["content"],
+                                role="assistant",
+                                model=SERVING_ENDPOINT_NAME,
+                                timestamp=original_timestamp,
+                                sources=response_data.get("sources", []),
+                                metrics={
+                                    "totalTime": total_time
+                                }
+                            )
+                            # Update message in cache
+                            chat_history_cache.update_message(
+                                request.session_id,
+                                request.message_id,
+                                response_data["content"]
+                            )
+                            # Update message in database
+                            chat_db.update_message(request.session_id, user_id, updated_message)
                             
-                                success, response_data = await handle_databricks_response(response, start_time)
-                                if success and response_data:
-                                    total_time = time.time() - start_time
-                                    updated_message = MessageResponse(
-                                        message_id=request.message_id,
-                                        content=response_data["content"],
-                                        role="assistant",
-                                        model=SERVING_ENDPOINT_NAME,
-                                        timestamp=original_timestamp,
-                                        sources=response_data.get("sources", []),
-                                        metrics={
-                                            "totalTime": total_time
-                                        }
-                                    )
-                                    # Update message in cache
-                                    chat_history_cache.update_message(
-                                        request.session_id,
-                                        request.message_id,
-                                        response_data["content"]
-                                    )
-                                    print(f"after updating cache with new content. New cache state: {chat_history_cache.get_history(request.session_id)}")
-                                    # Update message in database
-                                    chat_db.update_message(request.session_id, user_id, updated_message)
-                                    
-                                    # Include original timestamp in response
-                                    response_data["timestamp"] = original_timestamp
-                                    response_data["message_id"] = request.message_id
-                                    yield f"data: {updated_message.model_dump_json()}\n\n"
-                                    yield "event: done\ndata: {}\n\n"
+                            # Include original timestamp in response
+                            response_data["timestamp"] = original_timestamp
+                            response_data["message_id"] = request.message_id
+                            yield f"data: {updated_message.model_dump_json()}\n\n"
+                            yield "event: done\ndata: {}\n\n"
                     
             except Exception as e:
                 logger.error(f"Error in regeneration: {str(e)}")

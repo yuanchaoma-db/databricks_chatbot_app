@@ -39,7 +39,9 @@ export const sendMessage = async (
     }
 
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No reader available');
+    if (!reader) {
+      throw new Error('No reader available');
+    }
 
     const decoder = new TextDecoder();
     let accumulatedContent = '';
@@ -57,16 +59,20 @@ export const sendMessage = async (
           if (jsonStr && jsonStr !== '{}') {
             try {
               const data = JSON.parse(jsonStr);
-              if (data.content) {
-                accumulatedContent += data.content;
+              // Double parse if the first parse returned a string
+              const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+              
+              if (parsedData.content) {
+                accumulatedContent += parsedData.content;
               }
-              console.log('data', data);
+              console.log('data', parsedData);
+              console.log('data.message_id', parsedData.message_id);
               console.log('accumulatedContent', accumulatedContent);
               onChunk({
-                message_id: data.message_id,
+                message_id: parsedData.message_id,
                 content: accumulatedContent,
-                sources: data.sources,
-                metrics: data.metrics
+                sources: parsedData.sources,
+                metrics: parsedData.metrics
               });
             } catch (e) {
               console.error('Error parsing JSON:', e);
@@ -134,13 +140,11 @@ export const postError = async (
     );
 
     if (!response.ok) {
-      console.error('Failed to post error to backend');
       throw new Error('Failed to post error to backend');
     }
 
     return await response.json();
   } catch (error) {
-    console.error('Error posting error message:', error);
     throw error;
   }
 };
