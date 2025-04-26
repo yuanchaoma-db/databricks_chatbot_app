@@ -14,6 +14,7 @@ from databricks.sdk.service.serving import EndpointStateReady
 import backoff
 import time  
 import logging
+import copy
 import asyncio
 import threading
 from chat_database import ChatDatabase
@@ -270,7 +271,7 @@ async def extract_sources_from_trace(data: dict) -> list:
 async def handle_databricks_response(
     response: httpx.Response,
     start_time: float
-) -> tuple[bool, Optional[str]]:
+) -> Optional[str]:
     """
     Handle Databricks API response.
     Returns (success, response_string)
@@ -280,9 +281,6 @@ async def handle_databricks_response(
     if response.status_code == 200:
         data = response.json()
         sources = await extract_sources_from_trace(data)
-
-        if not data:
-            return False, None, None
         
         if 'choices' in data and len(data['choices']) > 0:
             content = data['choices'][0]['message']['content']
@@ -291,7 +289,6 @@ async def handle_databricks_response(
                 'sources': sources,
                 'metrics': {'totalTime': total_time}
             }
-            return True, response_data
         elif 'messages' in data and len(data['messages']) > 0:
             message = data['messages'][0]
             if message.get('role') == 'assistant' and 'content' in message:
@@ -300,9 +297,12 @@ async def handle_databricks_response(
                     'sources': sources,
                     'metrics': {'totalTime': total_time}
                 }
-                return True, response_data
-        
-             
+        else:
+            response_data = {
+                'content': 'No content found in response',
+                'sources': sources,
+                'metrics': {'totalTime': total_time}
+            }
     else:
         # Handle specific known cases
         error_data = response.json()
@@ -311,7 +311,7 @@ async def handle_databricks_response(
             'sources': [],
             'metrics': None
         }
-        return True, response_data
+    return response_data
     
 
 @api_app.post("/error")
@@ -388,7 +388,7 @@ async def chat(
     try:
         user_id = user_info["user_id"]
         is_first_message = chat_db.is_first_message(message.session_id, user_id)
-        chat_history = chat_history_cache.get_history(message.session_id)
+        chat_history = copy.deepcopy(chat_history_cache.get_history(message.session_id))
 
         # If cache is empty and not first message, load from database
         if not chat_history and not is_first_message:
@@ -401,7 +401,6 @@ async def chat(
                 ]
                 for msg in chat_history:
                     chat_history_cache.add_message(message.session_id, msg)
-
         # Save user message to session with user info
         user_message = MessageResponse(
             message_id=str(uuid.uuid4()),
@@ -434,12 +433,6 @@ async def chat(
                 write=8.0,
                 pool=8.0
             )
-            regular_timeout = httpx.Timeout(
-                connect=5.0,
-                read=30.0,
-                write=5.0,
-                pool=5.0
-            )
             supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
             request_data = {
                 "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_history] + 
@@ -457,60 +450,29 @@ async def chat(
                         headers=headers,
                         data=request_data
                     )
-                    success, response_data = await handle_databricks_response(response, start_time)
-                    if success and response_data:
-                        assistant_message_id = str(uuid.uuid4())
-                        assistant_message = MessageResponse(
-                            message_id=assistant_message_id,
-                            content=response_data["content"],
-                            role="assistant",
-                            model=SERVING_ENDPOINT_NAME,
-                            timestamp=datetime.now(),
-                            sources=response_data.get("sources"),
-                            metrics=response_data.get("metrics")
-                        )
-                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                        
-                        # Add assistant message to cache
-                        chat_history_cache.add_message(message.session_id, {
-                            "role": "assistant",
-                            "content": response_data["content"],
-                            "message_id": assistant_message_id,
-                            "created_at": assistant_message.timestamp
-                        })
-                        
-                        # Include message_id in response_data
-                        yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
-                        yield "event: done\ndata: {}\n\n"
-            
-                    else:
-                        logger.error("Failed to process Databricks response")
-                        error_message_id = str(uuid.uuid4())
-                        error_response = {
-                            'message_id': error_message_id,
-                            'content': 'Failed to process response from model',
-                            'sources': [],
-                            'metrics': None
-                        }
-                        
-                        error_message = MessageResponse(
-                            message_id=error_message_id,
-                            content=error_response["content"],
-                            role="assistant",
-                            model=SERVING_ENDPOINT_NAME,
-                            timestamp=datetime.now(),
-                            sources=error_response.get("sources"),
-                            metrics=error_response.get("metrics")
-                        )
-                        chat_history_cache.add_message(message.session_id, {
-                            "role": "assistant",
-                            "content": error_response["content"],
-                            "message_id": error_message_id,
-                            "created_at": datetime.now()
-                        })
-                        chat_db.save_message_to_session(message.session_id, user_id, error_message)
-                        yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
-                        yield "event: done\ndata: {}\n\n"
+                    response_data = await handle_databricks_response(response, start_time)
+                    assistant_message_id = str(uuid.uuid4())
+                    assistant_message = MessageResponse(
+                        message_id=assistant_message_id,
+                        content=response_data["content"],
+                        role="assistant",
+                        model=SERVING_ENDPOINT_NAME,
+                        timestamp=datetime.now(),
+                        sources=response_data.get("sources"),
+                        metrics=response_data.get("metrics")
+                    )
+                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                    
+                    # Add assistant message to cache
+                    chat_history_cache.add_message(message.session_id, {
+                        "role": "assistant",
+                        "content": response_data["content"],
+                        "message_id": assistant_message_id,
+                        "created_at": assistant_message.timestamp
+                    })
+                    # Include message_id in response_data
+                    yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
+                    yield "event: done\ndata: {}\n\n"
                 except Exception as e:
                     logger.error(f"Error in non-streaming response: {str(e)}")
                     error_message_id = str(uuid.uuid4())
@@ -532,7 +494,6 @@ async def chat(
                         "message_id": error_message_id,
                         "created_at": datetime.now()
                     })
-                    
                     yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                     yield "event: done\ndata: {}\n\n"
             else:
@@ -546,6 +507,7 @@ async def chat(
                             first_token_time = None
                             accumulated_content = ""
                             sources = None
+                            ttft = None
 
                             async with streaming_client.stream('POST', 
                                 f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
@@ -554,7 +516,6 @@ async def chat(
                                 timeout=streaming_timeout
                             ) as response:
                                 if response.status_code == 200:
-                                    has_content = False
                                     async for line in response.aiter_lines():
                                         if line.startswith('data: '):
                                             try:
@@ -583,45 +544,59 @@ async def chat(
                                                             'totalTime': time.time() - start_time
                                                         }
                                                     }
-                                                    if content:
-                                                        has_content = True
-                                                        yield f"data: {json.dumps(response_data)}\n\n"
+                                                    
+                                                    yield f"data: {json.dumps(response_data)}\n\n"
+                                                if "delta" in data:
+                                                    delta = data["delta"]
+                                                    if delta["role"] == "assistant" and delta.get("content"):
+                                                        content = delta['content']
+                                                        accumulated_content += content
+                                                        response_data = {
+                                                            'message_id': assistant_message_id,
+                                                            'content': content,
+                                                            'sources': sources if sources else None,
+                                                            'metrics': {
+                                                                'timeToFirstToken': ttft if first_token_time is not None else None,
+                                                                'totalTime': time.time() - start_time
+                                                            }
+                                                        }
+                                                        yield f"data: {json.dumps(response_data)}\n\n"    
                                             except json.JSONDecodeError:
                                                 continue
 
-                                    if has_content:
-                                        # Save complete message to session after streaming is done
-                                        assistant_message = MessageResponse(
-                                            message_id=assistant_message_id,
-                                            content=accumulated_content,
-                                            role="assistant",
-                                            model=SERVING_ENDPOINT_NAME,
-                                            timestamp=datetime.now(),
-                                            sources=sources,
-                                            metrics={'timeToFirstToken': ttft, 'totalTime': time.time() - start_time}
-                                        )
-                                        chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                                    assistant_message = MessageResponse(
+                                        message_id=assistant_message_id,
+                                        content=accumulated_content,
+                                        role="assistant",
+                                        model=SERVING_ENDPOINT_NAME,
+                                        timestamp=datetime.now(),
+                                        sources=sources,
+                                        metrics={'timeToFirstToken': ttft, 'totalTime': time.time() - start_time}
+                                    )
+                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                                    
+                                    # Add assistant message to cache
+                                    chat_history_cache.add_message(message.session_id, {
+                                        "role": "assistant",
+                                        "content": accumulated_content,
+                                        "message_id": assistant_message_id
+                                    })
+                                    
+                                    # Update cache to indicate streaming support
+                                    streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME] = {
+                                        'supports_streaming': True,
+                                        'supports_trace': supports_trace,
+                                        'last_checked': datetime.now()
+                                    }
+                                    # Send final message with complete content and sources
+                                    final_response = {
+                                        'message_id': assistant_message_id,
+                                        'sources': sources,
+                                    }
+                                    yield f"data: {json.dumps(final_response)}\n\n"
+                                    yield "event: done\ndata: {}\n\n"
+                                    
                                         
-                                        # Add assistant message to cache
-                                        chat_history_cache.add_message(message.session_id, {
-                                            "role": "assistant",
-                                            "content": accumulated_content,
-                                            "message_id": assistant_message_id
-                                        })
-                                        
-                                        # Update cache to indicate streaming support
-                                        streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME] = {
-                                            'supports_streaming': True,
-                                            'supports_trace': supports_trace,
-                                            'last_checked': datetime.now()
-                                        }
-                                        # Send final message with complete content and sources
-                                        final_response = {
-                                            'message_id': assistant_message_id,
-                                            'sources': sources,
-                                        }
-                                        yield f"data: {json.dumps(final_response)}\n\n"
-                                        yield "event: done\ndata: {}\n\n"
                                 else:
                                     raise Exception("Streaming not supported")
 
@@ -645,58 +620,27 @@ async def chat(
                                 response = await enqueue_request(url, headers, request_data)
                                 
                                 # Process the response
-                                success, response_data = await handle_databricks_response(response, start_time)
-                                if success and response_data:
-                                    # Save assistant message to session
-                                    assistant_message = MessageResponse(
-                                        message_id=str(uuid.uuid4()),
-                                        content=response_data["content"],
-                                        role="assistant",
-                                        model=SERVING_ENDPOINT_NAME,
-                                        timestamp=datetime.now(),
-                                        sources=response_data.get("sources"),
-                                        metrics=response_data.get("metrics")
-                                    )
-                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                    
-                                    # Add assistant message to cache
-                                    chat_history_cache.add_message(message.session_id, {
-                                        "role": "assistant",
-                                        "content": response_data["content"],
-                                        "message_id": assistant_message.message_id
-                                    })
-                                    
-                                    yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
-                                    yield "event: done\ndata: {}\n\n"
-                                else:
-                                    logger.error("Failed to process Databricks response")
-                                    error_message_id = str(uuid.uuid4())
-                                    error_response = {
-                                        'message_id': error_message_id,
-                                        'content': 'Failed to process response from model',
-                                        'sources': [],
-                                        'metrics': None
-                                    }
-                                    error_message = MessageResponse(
-                                        message_id=error_message_id,
-                                        content=error_response["content"],
-                                        role="assistant",
-                                        model=SERVING_ENDPOINT_NAME,
-                                        timestamp=datetime.now(),
-                                        sources=error_response.get("sources"),
-                                        metrics=error_response.get("metrics")
-                                    )
-                                    chat_db.save_message_to_session(message.session_id, user_id, error_message)
-                                    
-                                    # Add error message to cache with the original message ID
-                                    chat_history_cache.add_message(message.session_id, {
-                                        "role": "assistant",
-                                        "content": error_response["content"],
-                                        "message_id": error_message_id
-                                    })
-                                    
-                                    yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
-                                    yield "event: done\ndata: {}\n\n"
+                                response_data = await handle_databricks_response(response, start_time)
+                                assistant_message = MessageResponse(
+                                    message_id=str(uuid.uuid4()),
+                                    content=response_data["content"],
+                                    role="assistant",
+                                    model=SERVING_ENDPOINT_NAME,
+                                    timestamp=datetime.now(),
+                                    sources=response_data.get("sources"),
+                                    metrics=response_data.get("metrics")
+                                )
+                                chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
+                                
+                                # Add assistant message to cache
+                                chat_history_cache.add_message(message.session_id, {
+                                    "role": "assistant",
+                                    "content": response_data["content"],
+                                    "message_id": assistant_message.message_id
+                                })
+                                yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
+                                yield "event: done\ndata: {}\n\n"
+                                
                             except httpx.ReadTimeout as timeout_error:
                                 logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
                                 error_message_id = str(uuid.uuid4())
@@ -717,7 +661,7 @@ async def chat(
                                     "content": "Request timed out. Please try again later.",
                                     "message_id": error_message_id
                                 })
-                                
+
                                 yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                                 yield "event: done\ndata: {}\n\n"
 
@@ -848,9 +792,7 @@ async def regenerate_message(
 
         # Get the original message's timestamp
         original_message = chat_history[message_index]
-        logger.info(f"Found message to regenerate: {original_message}")
         original_timestamp = original_message.get('timestamp')
-        print("original_timestamp=", original_timestamp)
         if not original_timestamp:
             original_timestamp = datetime.now().isoformat()
 
@@ -875,7 +817,7 @@ async def regenerate_message(
                     first_token_time = None
                     accumulated_content = ""
                     sources = None
-
+                    ttft = None
                     if supports_streaming:
                         request_data["stream"] = True
                         async with streaming_semaphore:
@@ -901,20 +843,35 @@ async def regenerate_message(
                                                     if 'databricks_output' in data:
                                                         sources = await extract_sources_from_trace(data)
                                                     
-                                                    if content:
+                                                    accumulated_content += content
+                                                    current_time = time.time()
+                                                    response_data = {
+                                                        'message_id': request.message_id,
+                                                        'content': content,
+                                                        'sources': sources if sources else None,
+                                                        'metrics': {
+                                                            'timeToFirstToken': ttft,
+                                                            'totalTime': current_time - start_time
+                                                        },
+                                                        'timestamp': original_timestamp
+                                                    }
+                                                    yield f"data: {json.dumps(response_data)}\n\n"
+
+                                                if "delta" in data:
+                                                    delta = data["delta"]
+                                                    if delta["role"] == "assistant" and delta.get("content"):
+                                                        content = delta['content']
                                                         accumulated_content += content
-                                                        current_time = time.time()
                                                         response_data = {
                                                             'message_id': request.message_id,
                                                             'content': content,
                                                             'sources': sources if sources else None,
                                                             'metrics': {
-                                                                'timeToFirstToken': ttft,
-                                                                'totalTime': current_time - start_time
-                                                            },
-                                                            'timestamp': original_timestamp
+                                                                'timeToFirstToken': ttft if first_token_time is not None else None,
+                                                                'totalTime': time.time() - start_time
+                                                            }
                                                         }
-                                                        yield f"data: {json.dumps(response_data)}\n\n"
+                                                        yield f"data: {json.dumps(response_data)}\n\n"    
                                             except json.JSONDecodeError:
                                                 continue
 
@@ -949,34 +906,33 @@ async def regenerate_message(
                                     yield "event: done\ndata: {}\n\n"
                     else:
                         response = await enqueue_request(f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations", headers, request_data)
-                        success, response_data = await handle_databricks_response(response, start_time)
-                        if success and response_data:
-                            total_time = time.time() - start_time
-                            updated_message = MessageResponse(
-                                message_id=request.message_id,
-                                content=response_data["content"],
-                                role="assistant",
-                                model=SERVING_ENDPOINT_NAME,
-                                timestamp=original_timestamp,
-                                sources=response_data.get("sources", []),
-                                metrics={
-                                    "totalTime": total_time
-                                }
-                            )
-                            # Update message in cache
-                            chat_history_cache.update_message(
-                                request.session_id,
-                                request.message_id,
-                                response_data["content"]
-                            )
-                            # Update message in database
-                            chat_db.update_message(request.session_id, user_id, updated_message)
-                            
-                            # Include original timestamp in response
-                            response_data["timestamp"] = original_timestamp
-                            response_data["message_id"] = request.message_id
-                            yield f"data: {updated_message.model_dump_json()}\n\n"
-                            yield "event: done\ndata: {}\n\n"
+                        response_data = await handle_databricks_response(response, start_time)
+                        total_time = time.time() - start_time
+                        updated_message = MessageResponse(
+                            message_id=request.message_id,
+                            content=response_data["content"],
+                            role="assistant",
+                            model=SERVING_ENDPOINT_NAME,
+                            timestamp=original_timestamp,
+                            sources=response_data.get("sources", []),
+                            metrics={
+                                "totalTime": total_time
+                            }
+                        )
+                        # Update message in cache
+                        chat_history_cache.update_message(
+                            request.session_id,
+                            request.message_id,
+                            response_data["content"]
+                        )
+                        # Update message in database
+                        chat_db.update_message(request.session_id, user_id, updated_message)
+                        
+                        # Include original timestamp in response
+                        response_data["timestamp"] = original_timestamp
+                        response_data["message_id"] = request.message_id
+                        yield f"data: {updated_message.model_dump_json()}\n\n"
+                        yield "event: done\ndata: {}\n\n"
                     
             except Exception as e:
                 logger.error(f"Error in regeneration: {str(e)}")

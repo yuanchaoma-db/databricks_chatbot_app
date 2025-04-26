@@ -19,6 +19,7 @@ export const sendMessage = async (
   }) => void
 ): Promise<void> => {
   try {
+    console.log("Sending message to backend");
     const response = await fetch(
       `${API_URL}/chat`, 
       {
@@ -33,13 +34,15 @@ export const sendMessage = async (
         })
       }
     );
-
+    console.log("response===========", response);
     if (!response.ok) {
+      console.log("response.ok", response.ok);
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
+      console.log("No reader available");
       throw new Error('No reader available');
     }
 
