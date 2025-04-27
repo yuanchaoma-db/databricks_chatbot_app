@@ -36,6 +36,8 @@ const ChatList = styled.div`
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  max-height: calc(100vh - 120px); /* Adjust for header/footer height */
 `;
 
 const SessionGroup = styled.div`

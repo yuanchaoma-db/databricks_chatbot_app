@@ -255,7 +255,7 @@ async def extract_sources_from_trace(data: dict) -> list:
     sources = []
     if data is not None and "databricks_output" in data and "trace" in data["databricks_output"]:
         trace = data["databricks_output"]["trace"]
-        if "data" in trace and "spans" in trace["data"]:
+        if trace and "data" in trace and "spans" in trace["data"]:
             for span in trace["data"]["spans"]:
                 if span.get("name") == "VectorStoreRetriever":
                     retriever_output = json.loads(span["attributes"].get("mlflow.spanOutputs", "[]"))
@@ -290,13 +290,16 @@ async def handle_databricks_response(
                 'metrics': {'totalTime': total_time}
             }
         elif 'messages' in data and len(data['messages']) > 0:
-            message = data['messages'][0]
-            if message.get('role') == 'assistant' and 'content' in message:
-                response_data = {
-                    'content': message['content'],
-                    'sources': sources,
-                    'metrics': {'totalTime': total_time}
-                }
+            messages = data['messages']
+            content = []
+            for message in messages:
+                if message.get('role') == 'assistant' and 'content' in message:
+                    content.append(message['content'])
+            response_data = {
+                'content': '\n\n'.join(content),
+                'sources': sources,
+                'metrics': {'totalTime': total_time}
+            }
         else:
             response_data = {
                 'content': 'No content found in response',
@@ -397,7 +400,7 @@ async def chat(
                 # Convert to cache format and store
                 chat_history = [
                     {"role": msg.role, "content": msg.content, "message_id": msg.message_id}
-                    for msg in chat_data.messages[-10:]
+                    for msg in chat_data.messages[-20:]
                 ]
                 for msg in chat_history:
                     chat_history_cache.add_message(message.session_id, msg)
@@ -434,10 +437,15 @@ async def chat(
                 pool=8.0
             )
             supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
-            request_data = {
-                "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_history] + 
-                           [{"role": "user", "content": message.content}],
-            }
+            if message.include_history:
+                request_data = {
+                    "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_history] + 
+                            [{"role": "user", "content": message.content}],
+                }
+            else:
+                request_data = {
+                    "messages": [{"role": "user", "content": message.content}]
+                }
             if supports_trace:
                 request_data["databricks_options"] = {"return_trace": True}
 
@@ -553,7 +561,7 @@ async def chat(
                                                         accumulated_content += content
                                                         response_data = {
                                                             'message_id': assistant_message_id,
-                                                            'content': content,
+                                                            'content': content+"\n\n",
                                                             'sources': sources if sources else None,
                                                             'metrics': {
                                                                 'timeToFirstToken': ttft if first_token_time is not None else None,
@@ -761,8 +769,7 @@ async def regenerate_message(
     try:
         user_id = user_info["user_id"]
         # Get chat history from cache
-        chat_history = chat_history_cache.get_history(request.session_id)
-        logger.info(f"Initial cache state for session {request.session_id}: {chat_history}")
+        chat_history = copy.deepcopy(chat_history_cache.get_history(request.session_id))
         
         # If cache is empty, load from database
         if not chat_history:
@@ -770,19 +777,16 @@ async def regenerate_message(
             if chat_data and chat_data.messages:
                 chat_history = [
                     {"role": msg.role, "content": msg.content, "message_id": msg.message_id}
-                    for msg in chat_data.messages[-10:]
+                    for msg in chat_data.messages[-20:]
                 ]
                 for msg in chat_history:
                     chat_history_cache.add_message(request.session_id, msg)
-                logger.info(f"Loaded history from database into cache: {chat_history}")
-
         # Find the message to regenerate in the history
         message_index = next(
             (i for i, msg in enumerate(chat_history) 
              if msg.get('message_id') == request.message_id), 
             None
         )
-        
         if message_index is None:
             logger.error(f"Message {request.message_id} not found in session {request.session_id}")
             raise HTTPException(
@@ -798,18 +802,20 @@ async def regenerate_message(
 
         # Get history up to the message being regenerated
         history_up_to_message = chat_history[:message_index]
-        # The message after the one being regenerated should be the user's message
-        user_message = chat_history[message_index + 1] if message_index + 1 < len(chat_history) else None
 
         async def generate():
             try:
                 timeout = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
-                    request_data = {
-                        "messages": [{"role": msg["role"], "content": msg["content"]} for msg in history_up_to_message] + 
-                                   [{"role": "user", "content": request.original_content}],
-                    }
+                    if request.include_history:
+                        request_data = {
+                            "messages": [{"role": msg["role"], "content": msg["content"]} for msg in history_up_to_message]
+                        }
+                    else:
+                        request_data = {
+                            "messages": [{"role": "user", "content": history_up_to_message[-1]["content"]}]
+                        }
                     if supports_trace:
                         request_data["databricks_options"] = {"return_trace": True}
 

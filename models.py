@@ -5,6 +5,7 @@ from datetime import datetime
 class MessageRequest(BaseModel):
     content: str
     session_id: str
+    include_history: bool = True
 
 class MessageResponse(BaseModel):
     message_id: str
@@ -44,3 +45,4 @@ class RegenerateRequest(BaseModel):
     message_id: str
     original_content: str
     session_id: str 
+    include_history: bool = True

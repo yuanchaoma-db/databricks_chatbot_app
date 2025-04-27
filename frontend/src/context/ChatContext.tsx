@@ -9,13 +9,13 @@ interface ChatContextType {
   messages: Message[];
   loading: boolean;
   model: string;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, includeHistory: boolean) => Promise<void>;
   selectChat: (chatId: string) => void;
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   startNewSession: () => void;
   copyMessage: (content: string) => void;
-  regenerateMessage: (messageId: string) => Promise<void>;
+  regenerateMessage: (messageId: string, includeHistory: boolean) => Promise<void>;
   rateMessage: (messageId: string, rating: 'up' | 'down') => void;
   messageRatings: {[messageId: string]: 'up' | 'down'};
   logout: () => void;
@@ -67,7 +67,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     fetchModel();
   }, []);
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, includeHistory: boolean = true) => {
     if (!content.trim()) return;
 
     // Create new session if needed
@@ -104,7 +104,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         throw new Error('No active session ID');
       }
       
-      await apiSendMessage(content, currentSessionId, (chunk) => {
+      await apiSendMessage(content, currentSessionId, includeHistory, (chunk) => {
         if (chunk.content) {
           accumulatedContent = chunk.content;
         }
@@ -234,7 +234,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       });
   };
 
-  const regenerateMessage = async (messageId: string) => {
+  const regenerateMessage = async (messageId: string, includeHistory: boolean = true) => {
     console.log('Regenerating message:', messages);
     console.log('Current session ID:', currentSessionId);
     
@@ -286,6 +286,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         previousUserMessage.content,
         currentSessionId,
         messageId,
+        includeHistory,
         (chunk) => {
           if (chunk.content) {
             accumulatedContent = chunk.content;

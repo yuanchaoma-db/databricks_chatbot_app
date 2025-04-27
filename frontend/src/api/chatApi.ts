@@ -7,6 +7,7 @@ export const API_URL = 'http://localhost:8000/chat-api';
 export const sendMessage = async (
   content: string, 
   sessionId: string,
+  includeHistory: boolean,
   onChunk: (chunk: { 
     message_id: string,
     content?: string, 
@@ -30,11 +31,11 @@ export const sendMessage = async (
         },
         body: JSON.stringify({ 
           content,
-          session_id: sessionId
+          session_id: sessionId,
+          include_history: includeHistory
         })
       }
     );
-    console.log("response===========", response);
     if (!response.ok) {
       console.log("response.ok", response.ok);
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -68,9 +69,6 @@ export const sendMessage = async (
               if (parsedData.content) {
                 accumulatedContent += parsedData.content;
               }
-              console.log('data', parsedData);
-              console.log('data.message_id', parsedData.message_id);
-              console.log('accumulatedContent', accumulatedContent);
               onChunk({
                 message_id: parsedData.message_id,
                 content: accumulatedContent,
@@ -156,6 +154,7 @@ export const regenerateMessage = async (
   content: string,
   sessionId: string,
   messageId: string,
+  includeHistory: boolean,
   onChunk: (chunk: {
     content?: string,
     sources?: any[],
@@ -177,7 +176,8 @@ export const regenerateMessage = async (
         body: JSON.stringify({ 
           message_id: messageId,
           original_content: content,
-          session_id: sessionId
+          session_id: sessionId,
+          include_history: includeHistory
         })
       }
     );
@@ -276,19 +276,6 @@ export const fetchUserInfo = async (): Promise<{ username: string; email: string
   }
 };
 
-// export const getSessionMessages = async (sessionId: string): Promise<{ messages: Message[] }> => {
-//   try {
-//     const response = await fetch(`${API_URL}/sessions/${sessionId}/messages`);
-//     if (!response.ok) {
-//       throw new Error(`HTTP error! status: ${response.status}`);
-//     }
-//     const data = await response.json();
-//     return data.messages;
-//   } catch (error) {
-//     console.error('Error fetching session messages:', error);
-//     throw error;
-//   }
-// };
 
 export const rateMessage = async (messageId: string, rating: 'up' | 'down' | null): Promise<void> => {
   try {

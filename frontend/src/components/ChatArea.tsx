@@ -129,6 +129,7 @@ const ChatArea: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
   const [hasStartedChat, setHasStartedChat] = useState(false);
+  const [includeHistory, setIncludeHistory] = useState(true);
 
   useEffect(() => {
     if (messages?.length > 0 && !hasStartedChat) {
@@ -149,12 +150,12 @@ const ChatArea: React.FC = () => {
   
   const handleSuggestionClick = (suggestion: string) => {
     setHasStartedChat(true);
-    sendMessage(suggestion);
+    sendMessage(suggestion, includeHistory);
   };
   
   const handleRegenerate = async (messageId: string) => {
     setIsRegenerating(true);
-    await regenerateMessage(messageId);
+    await regenerateMessage(messageId, includeHistory);
   };
   
   return (
@@ -163,7 +164,12 @@ const ChatArea: React.FC = () => {
       <ChatContent data-testid="chat-content">
         <WelcomeContainer visible={!hasMessages} data-testid="welcome-container">
           <WelcomeMessage data-testid="welcome-message">What can I help with?</WelcomeMessage>
-          <ChatInput setIsRegenerating={setIsRegenerating} data-testid="chat-input" />
+          <ChatInput 
+            setIsRegenerating={setIsRegenerating} 
+            includeHistory={includeHistory}
+            setIncludeHistory={setIncludeHistory}
+            data-testid="chat-input" 
+          />
           <SuggestionButtons data-testid="suggestion-buttons">
             <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Find tables to query")}>
               <SuggestionIcon />
@@ -201,7 +207,12 @@ const ChatArea: React.FC = () => {
       </ChatContent>
       
       <FixedInputWrapper visible={hasMessages} data-testid="fixed-input-wrapper">
-        <ChatInput fixed={true} setIsRegenerating={setIsRegenerating} />
+        <ChatInput 
+          fixed={true} 
+          setIsRegenerating={setIsRegenerating} 
+          includeHistory={includeHistory}
+          setIncludeHistory={setIncludeHistory}
+        />
         <DisclaimerFixed>Chatbot may make mistakes. Check important info.</DisclaimerFixed>
       </FixedInputWrapper>
     </ChatContainer>
