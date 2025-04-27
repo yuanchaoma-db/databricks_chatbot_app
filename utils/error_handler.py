@@ -13,13 +13,8 @@ class ErrorHandler:
         self.message_handler = message_handler
 
     @staticmethod
-    def handle_error(error: Exception, status_code: int = 500, detail: str = None) -> None:
+    def handle_error(status_code: int = 500, detail: str = None) -> None:
         """Handle and log errors, raising appropriate HTTP exceptions"""
-        logger.error(f"Error occurred: {str(error)}")
-        
-        if isinstance(error, HTTPException):
-            raise error
-            
         if not detail:
             detail = ERROR_MESSAGES["general"]
             

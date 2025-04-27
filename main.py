@@ -10,22 +10,16 @@ import uuid
 from datetime import datetime, timedelta
 import json
 import httpx
-import backoff
 import time  
 import logging
-import copy
 import asyncio
-import threading
 from chat_database import ChatDatabase
 from token_minter import TokenMinter
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from models import MessageRequest, MessageResponse, ChatHistoryItem, ChatHistoryResponse, CreateChatRequest, ErrorRequest, RegenerateRequest
 from utils.config import SERVING_ENDPOINT_NAME, DATABRICKS_HOST, CLIENT_ID, CLIENT_SECRET
-from utils.chat_history_cache import ChatHistoryCache
-from utils.request_handler import RequestHandler
-from utils.error_handler import ErrorHandler
-from utils.message_handler import MessageHandler
+from utils import *
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,29 +65,7 @@ error_handler = ErrorHandler(message_handler)
 request_handler = RequestHandler(SERVING_ENDPOINT_NAME)
 streaming_semaphore = request_handler.streaming_semaphore
 
-async def get_user_info(request: Request = None) -> dict:
-    """Get user information from request headers"""
-    if not request:
-        # For testing purposes, return test user info
-        return {
-            "email": "test@databricks.com",
-            "user_id": "test_user1",
-            "username": "test_user1"
-        }
-    
-    # user_info = {
-    #     "email": request.headers.get("X-Forwarded-Email"),
-    #     "user_id": request.headers.get("X-Forwarded-User"),
-    #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
-    # }
-    user_info = {
-        "email": "test@databricks.com",
-        "user_id": "test_user1",
-        "username": "test_user1"
-    }
-    if not user_info["user_id"]:
-        raise HTTPException(status_code=401, detail="User not authenticated")
-    return user_info
+
 
 # Dependency to get auth headers
 async def get_auth_headers() -> dict:
@@ -105,41 +77,6 @@ async def get_auth_headers() -> dict:
 @api_app.get("/")
 async def root():
     return {"message": "Databricks Chat API is running"}
-
-# Add this function to check and update cache
-async def check_endpoint_capabilities(model: str) -> tuple[bool, bool]:
-    """
-    Check if endpoint supports streaming and trace data.
-    Returns (supports_streaming, supports_trace)
-    """
-    client = WorkspaceClient()
-    current_time = datetime.now()
-    cache_entry = streaming_support_cache['endpoints'].get(model)
-    
-    # If cache entry exists and is less than 24 hours old, use cached value
-    if cache_entry and (current_time - cache_entry['last_checked']) < timedelta(days=1):
-        return cache_entry['supports_streaming'], cache_entry['supports_trace']
-    
-    # Cache expired or doesn't exist - fetch fresh data
-    try:
-        endpoint = client.serving_endpoints.get(model)
-        supports_trace = any(
-            entity.name == 'feedback'
-            for entity in endpoint.config.served_entities
-        )
-        
-        # Update cache with fresh data
-        streaming_support_cache['endpoints'][model] = {
-            'supports_streaming': True,
-            'supports_trace': supports_trace,
-            'last_checked': current_time
-        }
-        return True, supports_trace
-        
-    except Exception as e:
-        logger.error(f"Error checking endpoint capabilities: {str(e)}")
-        # If error occurs, return default values
-        return True, False
 
 # Global request queue (maxsize can be adjusted)
 request_queue = request_handler.request_queue
@@ -188,7 +125,7 @@ async def chat(
                 write=8.0,
                 pool=8.0
             )
-            supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME)
+            supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME, streaming_support_cache)
             if message.include_history:
                 request_data = {
                     "messages": [{"role": msg["role"], "content": msg["content"]} for msg in chat_history] + 
@@ -385,7 +322,6 @@ async def chat(
         )
 
     except Exception as e:
-        logger.error(f"Error calling Databricks API: {str(e)}")
         error_message = "An error occurred while processing your request."
         
         # Handle rate limit errors specifically
@@ -427,7 +363,6 @@ async def get_session_messages(session_id: str, user_info: dict = Depends(get_us
         user_id = user_info["user_id"]
         chat_data = chat_db.get_chat(session_id, user_id)
         if not chat_data:
-            logger.error(f"Session {session_id} not found in database")
             raise HTTPException(
                 status_code=404, 
                 detail=f"Chat session {session_id} not found. Please ensure you're using a valid session ID."
@@ -436,7 +371,6 @@ async def get_session_messages(session_id: str, user_info: dict = Depends(get_us
         return {"messages": chat_data.messages}
         
     except Exception as e:
-        logger.error(f"Error getting session messages: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while retrieving session messages."
@@ -457,7 +391,6 @@ async def regenerate_message(
             None
         )
         if message_index is None:
-            logger.error(f"Message {request.message_id} not found in session {request.session_id}")
             raise HTTPException(
                 status_code=404, 
                 detail=f"Message {request.message_id} not found in chat session {request.session_id}."
@@ -608,7 +541,6 @@ async def regenerate_message(
             }
         )
     except Exception as e:
-        logger.error(f"Error in regenerate_message endpoint: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while regenerating the message."
@@ -638,7 +570,6 @@ async def rate_message(
             )
         return {"status": "success", "rating": rating}
     except Exception as e:
-        logger.error(f"Error rating message: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while rating the message"
@@ -653,76 +584,7 @@ async def logout():
 async def login(user_info: dict = Depends(get_user_info)):
     return {"user_info": user_info}
 
-async def load_chat_history(session_id: str, user_id: str, is_first_message: bool) -> List[Dict]:
-    """
-    Load chat history with caching mechanism.
-    Returns chat history in cache format.
-    """
-    # Try to get from cache first
-    chat_history = copy.deepcopy(chat_history_cache.get_history(session_id))
-    if chat_history:
-        chat_history = convert_messages_to_cache_format(chat_history.messages)
-    # If cache is empty and not first message, load from database
-    elif not chat_history and not is_first_message:
-        chat_data = chat_db.get_chat(session_id, user_id)
-        if chat_data and chat_data.messages:
-            # Convert to cache format
-            chat_history = convert_messages_to_cache_format(chat_data.messages)
-            # Store in cache
-            for msg in chat_history:
-                chat_history_cache.add_message(session_id, msg)
-    
-    return chat_history or []
 
-def convert_messages_to_cache_format(messages: List) -> List[Dict]:
-    """
-    Convert database messages to cache format.
-    Returns last 20 messages in cache format.
-    """
-    if not messages:
-        return []
-    
-    return [
-        {
-            "role": msg.role,
-            "content": msg.content,
-            "message_id": msg.message_id,
-            "timestamp": msg.timestamp.isoformat() if isinstance(msg.timestamp, datetime) else msg.timestamp
-        } 
-        for msg in messages[-20:]
-    ]
-
-def create_response_data(
-    message_id: str,
-    content: str,
-    sources: Optional[List],
-    ttft: Optional[float],
-    total_time: float,
-    timestamp: Optional[str] = None
-) -> Dict:
-    """Create standardized response data for both streaming and non-streaming responses."""
-    # Convert content to string if it's a dictionary
-    if isinstance(content, dict):
-        content = content.get('content', '')
-    if isinstance(timestamp, datetime):
-        timestamp = timestamp.isoformat()
-    # Create response data
-    response_data = {
-        'message_id': message_id,
-        'content': content,
-        'sources': sources if sources else None,
-        'metrics': {
-            'timeToFirstToken': ttft,
-            'totalTime': total_time
-        }
-    }
-    
-    # Add timestamp if provided
-    if timestamp:
-        response_data['timestamp'] = timestamp
-        
-    # Convert any datetime objects in the response to strings
-    return response_data
 
 if __name__ == "__main__":
     import uvicorn

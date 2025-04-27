@@ -14,7 +14,8 @@ from .config import (
     MAX_CONCURRENT_STREAMS,
     MAX_QUEUE_SIZE
 )
-
+from .error_handler import ErrorHandler
+from fastapi import HTTPException, Request
 logger = logging.getLogger(__name__)
 
 class RequestHandler:
@@ -148,3 +149,4 @@ class RequestHandler:
                 'metrics': None
             }
         return response_data
+    
