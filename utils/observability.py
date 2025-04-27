@@ -75,6 +75,10 @@ class ObservabilityTracer:
         span_data = asdict(span)
         span_data['start_time'] = span_data['start_time'].isoformat()
         span_data['end_time'] = span_data['end_time'].isoformat() if span_data['end_time'] else None
+        if span_data['events']:
+            for event in span_data['events']:
+                if 'timestamp' in event:
+                    event['timestamp'] = event['timestamp'].isoformat()
         self.logger.info(f"Span completed: {json.dumps(span_data)}")
 
 class MetricsCollector:

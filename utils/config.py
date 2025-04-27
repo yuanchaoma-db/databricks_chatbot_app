@@ -26,6 +26,6 @@ CACHE_UPDATE_INTERVAL = 24 * 60 * 60  # 24 hours in seconds
 ERROR_MESSAGES = {
     "rate_limit": "The service is currently experiencing high demand. Please wait a moment and try again.",
     "timeout": "Request timed out. Please try again later.",
-    "not_found": "{resource_type} {resource_id} not found. Please ensure you're using a valid ID.",
+    "not_found": "{resource_id} not found. Please ensure you're using a valid session ID.",
     "general": "An error occurred while processing your request."
 } 

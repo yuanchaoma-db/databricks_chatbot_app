@@ -10,7 +10,6 @@ import uuid
 from datetime import datetime, timedelta
 import json
 import httpx
-from databricks.sdk.service.serving import EndpointStateReady
 import backoff
 import time  
 import logging
@@ -22,13 +21,19 @@ from token_minter import TokenMinter
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from models import MessageRequest, MessageResponse, ChatHistoryItem, ChatHistoryResponse, CreateChatRequest, ErrorRequest, RegenerateRequest
+from utils.config import SERVING_ENDPOINT_NAME, DATABRICKS_HOST, CLIENT_ID, CLIENT_SECRET
+from utils.chat_history_cache import ChatHistoryCache
+from utils.request_handler import RequestHandler
+from utils.error_handler import ErrorHandler
+from utils.message_handler import MessageHandler
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(request_worker())
+    asyncio.create_task(request_handler.request_worker())
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -44,13 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Constants
-SERVING_ENDPOINT_NAME = os.getenv("SERVING_ENDPOINT_NAME")
-assert SERVING_ENDPOINT_NAME, "SERVING_ENDPOINT_NAME is not set"
-
-DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
-CLIENT_ID = os.environ.get("DATABRICKS_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("DATABRICKS_CLIENT_SECRET")
 
 # Initialize token minter
 token_minter = TokenMinter(
@@ -59,64 +57,19 @@ token_minter = TokenMinter(
     host=DATABRICKS_HOST
 )
 
-# Initialize Databricks workspace client
-client = WorkspaceClient()
+
 # Cache to track streaming support for endpoints
 streaming_support_cache = {
     'last_updated': datetime.now(),
     'endpoints': {}  # Format: {'endpoint_name': {'supports_streaming': bool, 'supports_trace': bool, 'last_checked': datetime}}
 }
-
-chat_db = ChatDatabase()
-
-class ChatHistoryCache:
-    """In-memory cache for chat history"""
-    def __init__(self):
-        self.cache: Dict[str, List[Dict]] = defaultdict(list)
-        self.lock = threading.Lock()
-
-    def get_history(self, session_id: str) -> List[Dict]:
-        """Get chat history from cache"""
-        with self.lock:
-            return self.cache[session_id]
-
-    def add_message(self, session_id: str, message: Dict):
-        """Add a message to the cache"""
-        with self.lock:
-            # Add created_at if not present
-            if 'created_at' not in message:
-                message['created_at'] = datetime.now().isoformat()
-            if 'timestamp' not in message:
-                message['timestamp'] = message['created_at']
-            
-            self.cache[session_id].append(message)
-            # Keep only last 10 messages
-            if len(self.cache[session_id]) > 10:
-                self.cache[session_id] = self.cache[session_id][-10:]
-
-    def clear_session(self, session_id: str):
-        """Clear a session from cache"""
-        with self.lock:
-            if session_id in self.cache:
-                del self.cache[session_id]
-
-    def update_message(self, session_id: str, message_id: str, new_content: str):
-        """Update a message in the cache while preserving order"""
-        with self.lock:
-            messages = self.cache[session_id]
-            for msg in messages:
-                if msg.get('message_id') == message_id:
-                    # Preserve the original created_at and position
-                    msg['content'] = new_content
-                    # Update timestamp but keep created_at
-                    msg['timestamp'] = datetime.now().isoformat()
-                    break
-
-# Initialize the cache
 chat_history_cache = ChatHistoryCache()
+chat_db = ChatDatabase()
+message_handler = MessageHandler(chat_db, chat_history_cache)
+error_handler = ErrorHandler(message_handler)
 
-# Limit to 3 concurrent streaming requests
-streaming_semaphore = asyncio.Semaphore(10)
+request_handler = RequestHandler(SERVING_ENDPOINT_NAME)
+streaming_semaphore = request_handler.streaming_semaphore
 
 async def get_user_info(request: Request = None) -> dict:
     """Get user information from request headers"""
@@ -159,6 +112,7 @@ async def check_endpoint_capabilities(model: str) -> tuple[bool, bool]:
     Check if endpoint supports streaming and trace data.
     Returns (supports_streaming, supports_trace)
     """
+    client = WorkspaceClient()
     current_time = datetime.now()
     cache_entry = streaming_support_cache['endpoints'].get(model)
     
@@ -188,197 +142,18 @@ async def check_endpoint_capabilities(model: str) -> tuple[bool, bool]:
         return True, False
 
 # Global request queue (maxsize can be adjusted)
-request_queue = asyncio.Queue(maxsize=100)
-
-# Worker to process requests from the queue
-async def request_worker():
-    while True:
-        try:
-            fut, args, kwargs = await request_queue.get()
-            try:
-                result = await make_databricks_request(*args, **kwargs)
-                if not fut.done():
-                    fut.set_result(result)
-            except Exception as e:
-                logger.error(f"Error in request worker: {str(e)}")
-                if not fut.done():
-                    fut.set_exception(e)
-            finally:
-                request_queue.task_done()
-        except Exception as e:
-            logger.error(f"Critical error in request worker: {str(e)}")
-            await asyncio.sleep(1)  # Add delay before retrying
-
-async def enqueue_request(*args, **kwargs):
-    loop = asyncio.get_event_loop()
-    fut = loop.create_future()
-    await request_queue.put((fut, args, kwargs))
-    try:
-        return await fut
-    except Exception as e:
-        logger.error(f"Error in enqueue_request: {str(e)}")
-        raise
-
-# First, modify the make_databricks_request function to include timeout
-@backoff.on_exception(
-    backoff.expo,
-    (httpx.HTTPError, httpx.ReadTimeout, httpx.HTTPStatusError, RuntimeError),
-    max_tries=5,  
-    max_time=120,  
-    base=4,
-    jitter=backoff.full_jitter,
-)
-async def make_databricks_request(url: str, headers: dict, data: dict):
-    try:
-        logger.info(f"Making Databricks request to {url}")
-        
-        # Create a new client for each attempt to ensure fresh connection
-        async with httpx.AsyncClient(timeout=30.0) as new_client:
-            response = await new_client.post(url, headers=headers, json=data, timeout=30.0)
-            
-            # Handle rate limit error specifically
-            if response.status_code == 429:
-                retry_after = response.headers.get('Retry-After')
-                if retry_after:
-                    wait_time = int(retry_after)
-                    logger.info(f"Rate limited. Waiting {wait_time} seconds before retry.")
-                    await asyncio.sleep(wait_time)
-                raise httpx.HTTPStatusError("Rate limit exceeded", request=response.request, response=response)
-            return response
-            
-    except Exception as e:
-        logger.error(f"Request failed: {str(e)}")
-        raise  # Re-raise the exception to trigger backoff
-
-async def extract_sources_from_trace(data: dict) -> list:
-    """Extract sources from the Databricks API trace data."""
-    sources = []
-    if data is not None and "databricks_output" in data and "trace" in data["databricks_output"]:
-        trace = data["databricks_output"]["trace"]
-        if trace and "data" in trace and "spans" in trace["data"]:
-            for span in trace["data"]["spans"]:
-                if span.get("name") == "VectorStoreRetriever":
-                    retriever_output = json.loads(span["attributes"].get("mlflow.spanOutputs", "[]"))
-                    sources = [
-                        {
-                            "page_content": doc["page_content"],
-                            "metadata": doc["metadata"]
-                        } 
-                        for doc in retriever_output
-                    ]
-    return sources
-
-async def handle_databricks_response(
-    response: httpx.Response,
-    start_time: float
-) -> Optional[str]:
-    """
-    Handle Databricks API response.
-    Returns (success, response_string)
-    """
-    total_time = time.time() - start_time
-
-    if response.status_code == 200:
-        data = response.json()
-        sources = await extract_sources_from_trace(data)
-        
-        if 'choices' in data and len(data['choices']) > 0:
-            content = data['choices'][0]['message']['content']
-            response_data = {
-                'content': content,
-                'sources': sources,
-                'metrics': {'totalTime': total_time}
-            }
-        elif 'messages' in data and len(data['messages']) > 0:
-            messages = data['messages']
-            content = []
-            for message in messages:
-                if message.get('role') == 'assistant' and 'content' in message:
-                    content.append(message['content'])
-            response_data = {
-                'content': '\n\n'.join(content),
-                'sources': sources,
-                'metrics': {'totalTime': total_time}
-            }
-        else:
-            response_data = {
-                'content': 'No content found in response',
-                'sources': sources,
-                'metrics': {'totalTime': total_time}
-            }
-    else:
-        # Handle specific known cases
-        error_data = response.json()
-        response_data = {
-            'content': error_data.get('error_code', 'Encountered an error') + ". " + error_data.get('message', 'Error processing response.'),
-            'sources': [],
-            'metrics': None
-        }
-    return response_data
-    
+request_queue = request_handler.request_queue
 
 @api_app.post("/error")
 async def error(
     error: ErrorRequest,
     user_info: dict = Depends(get_user_info)
 ):
-    user_id = user_info["user_id"]
-    
-    # Get the chat session from database
-    chat_data = chat_db.get_chat(error.session_id, user_id)
-    if not chat_data:
-        logger.error(f"Session {error.session_id} not found in database")
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Chat session {error.session_id} not found. Please ensure you're using a valid session ID."
-        )
-    
-    # Check if this is a new error message or updating an existing one
-    is_new_error = not any(msg.message_id == error.message_id for msg in chat_data.messages)
-    
-    if is_new_error:
-        # Create new error message
-        error_message = MessageResponse(
-            message_id=str(uuid.uuid4()),  # Generate new ID for new error
-            content=error.content,
-            role=error.role,
-            model=SERVING_ENDPOINT_NAME,
-            timestamp=error.timestamp,
-            sources=error.sources,
-            metrics=error.metrics
-        )
-        # Save new error message to database
-        chat_db.save_message_to_session(error.session_id, user_id, error_message)
-        # Add to cache
-        chat_history_cache.add_message(error.session_id, {
-            "role": error.role,
-            "content": error.content,
-            "message_id": error_message.message_id,
-            "timestamp": error.timestamp
-        })
-    else:
-        # Update existing message
-        error_message = MessageResponse(
-            message_id=error.message_id,  # Use existing message ID
-            content=error.content,
-            role=error.role,
-            model=SERVING_ENDPOINT_NAME,
-            timestamp=error.timestamp,
-            sources=error.sources,
-            metrics=error.metrics
-        )
-        # Update message in database
-        chat_db.update_message(error.session_id, user_id, error_message)
-        # Update in cache
-        chat_history_cache.update_message(error.session_id, error.message_id, error.content)
-    
-    return {"status": "error saved", "message_id": error_message.message_id}
+    await error_handler.handle_error_endpoint(error, user_info)
 
 @api_app.get("/model")
 async def get_model():
     return {"model": SERVING_ENDPOINT_NAME}
-
-
 
 # Modify the chat endpoint to handle sessions
 @api_app.post("/chat")
@@ -391,43 +166,20 @@ async def chat(
     try:
         user_id = user_info["user_id"]
         is_first_message = chat_db.is_first_message(message.session_id, user_id)
-        chat_history = copy.deepcopy(chat_history_cache.get_history(message.session_id))
-
-        # If cache is empty and not first message, load from database
-        if not chat_history and not is_first_message:
-            chat_data = chat_db.get_chat(message.session_id, user_id)
-            if chat_data and chat_data.messages:
-                # Convert to cache format and store
-                chat_history = [
-                    {"role": msg.role, "content": msg.content, "message_id": msg.message_id}
-                    for msg in chat_data.messages[-20:]
-                ]
-                for msg in chat_history:
-                    chat_history_cache.add_message(message.session_id, msg)
+        
+        # Load chat history with caching
+        chat_history = await load_chat_history(message.session_id, user_id, is_first_message)
+        
         # Save user message to session with user info
-        user_message = MessageResponse(
+        user_message = message_handler.create_message(
             message_id=str(uuid.uuid4()),
             content=message.content,
             role="user",
-            model=SERVING_ENDPOINT_NAME,
-            timestamp=datetime.now(),
-            created_at=datetime.now()
-        )
-        chat_db.save_message_to_session(
-            message.session_id,
-            user_id,
-            user_message,
+            session_id=message.session_id,
+            user_id=user_id,
             user_info=user_info,
             is_first_message=is_first_message
         )
-
-        # Add current message to cache
-        chat_history_cache.add_message(message.session_id, {
-            "role": "user",
-            "content": message.content,
-            "message_id": user_message.message_id,
-            "created_at": user_message.timestamp
-        })
 
         async def generate():
             streaming_timeout = httpx.Timeout(
@@ -453,55 +205,36 @@ async def chat(
                 try:
                     logger.info("non Streaming is running")
                     start_time = time.time()
-                    response = await enqueue_request(
+                    response = await request_handler.enqueue_request(
                         f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations",
                         headers=headers,
                         data=request_data
                     )
-                    response_data = await handle_databricks_response(response, start_time)
-                    assistant_message_id = str(uuid.uuid4())
-                    assistant_message = MessageResponse(
-                        message_id=assistant_message_id,
+                    response_data = await request_handler.handle_databricks_response(response, start_time)
+                    
+                    assistant_message = message_handler.create_message(
+                        message_id=str(uuid.uuid4()),
                         content=response_data["content"],
                         role="assistant",
-                        model=SERVING_ENDPOINT_NAME,
-                        timestamp=datetime.now(),
+                        session_id=message.session_id,
+                        user_id=user_id,
+                        user_info=user_info,
                         sources=response_data.get("sources"),
                         metrics=response_data.get("metrics")
                     )
-                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
                     
-                    # Add assistant message to cache
-                    chat_history_cache.add_message(message.session_id, {
-                        "role": "assistant",
-                        "content": response_data["content"],
-                        "message_id": assistant_message_id,
-                        "created_at": assistant_message.timestamp
-                    })
                     # Include message_id in response_data
                     yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
                     yield "event: done\ndata: {}\n\n"
                 except Exception as e:
                     logger.error(f"Error in non-streaming response: {str(e)}")
-                    error_message_id = str(uuid.uuid4())
-                    error_message = MessageResponse(
-                        message_id=error_message_id,
-                        content="Request timed out. Please try again later.",
-                        role="assistant",
-                        model=SERVING_ENDPOINT_NAME,
-                        timestamp=datetime.now(),
-                        sources=[],
-                        metrics=None
-                    )
-                    chat_db.save_message_to_session(message.session_id, user_id, error_message)
                     
-                    # Add error message to cache
-                    chat_history_cache.add_message(message.session_id, {
-                        "role": "assistant",
-                        "content": "Request timed out. Please try again later.",
-                        "message_id": error_message_id,
-                        "created_at": datetime.now()
-                    })
+                    error_message = message_handler.create_error_message(
+                        session_id=message.session_id,
+                        user_id=user_id,
+                        error_content="Request timed out. Please try again later."
+
+                    )
                     yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                     yield "event: done\ndata: {}\n\n"
             else:
@@ -541,17 +274,15 @@ async def chat(
                                                     accumulated_content += content
                                                     # Extract sources if this is the final message containing databricks_options
                                                     if 'databricks_output' in data:
-                                                        sources = await extract_sources_from_trace(data)
+                                                        sources = await request_handler.extract_sources_from_trace(data)
                                                     # Include the same assistant_message_id in each chunk
-                                                    response_data = {
-                                                        'message_id': assistant_message_id,
-                                                        'content': content if content else None,
-                                                        'sources': sources if sources else None,
-                                                        'metrics': {
-                                                            'timeToFirstToken': ttft if first_token_time is not None else None,
-                                                            'totalTime': time.time() - start_time
-                                                        }
-                                                    }
+                                                    response_data = create_response_data(
+                                                        assistant_message_id,
+                                                        content if content else None,
+                                                        sources,
+                                                        ttft if first_token_time is not None else None,
+                                                        time.time() - start_time
+                                                    )
                                                     
                                                     yield f"data: {json.dumps(response_data)}\n\n"
                                                 if "delta" in data:
@@ -559,37 +290,26 @@ async def chat(
                                                     if delta["role"] == "assistant" and delta.get("content"):
                                                         content = delta['content']
                                                         accumulated_content += content
-                                                        response_data = {
-                                                            'message_id': assistant_message_id,
-                                                            'content': content+"\n\n",
-                                                            'sources': sources if sources else None,
-                                                            'metrics': {
-                                                                'timeToFirstToken': ttft if first_token_time is not None else None,
-                                                                'totalTime': time.time() - start_time
-                                                            }
-                                                        }
+                                                        response_data = create_response_data(
+                                                            assistant_message_id,
+                                                            content+"\n\n",
+                                                            sources,
+                                                            ttft if first_token_time is not None else None,
+                                                            time.time() - start_time
+                                                        )
                                                         yield f"data: {json.dumps(response_data)}\n\n"    
                                             except json.JSONDecodeError:
                                                 continue
-
-                                    assistant_message = MessageResponse(
+                                    assistant_message = message_handler.create_message(
                                         message_id=assistant_message_id,
                                         content=accumulated_content,
                                         role="assistant",
-                                        model=SERVING_ENDPOINT_NAME,
-                                        timestamp=datetime.now(),
+                                        session_id=message.session_id,
+                                        user_id=user_id,
+                                        user_info=user_info,
                                         sources=sources,
                                         metrics={'timeToFirstToken': ttft, 'totalTime': time.time() - start_time}
                                     )
-                                    chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                    
-                                    # Add assistant message to cache
-                                    chat_history_cache.add_message(message.session_id, {
-                                        "role": "assistant",
-                                        "content": accumulated_content,
-                                        "message_id": assistant_message_id
-                                    })
-                                    
                                     # Update cache to indicate streaming support
                                     streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME] = {
                                         'supports_streaming': True,
@@ -606,6 +326,7 @@ async def chat(
                                     
                                         
                                 else:
+                                    print("streaming not supported")
                                     raise Exception("Streaming not supported")
 
                         except (httpx.ReadTimeout, httpx.HTTPError, Exception) as e:
@@ -625,50 +346,31 @@ async def chat(
                                 logger.info(f"Making fallback request with fresh connection to {url}")
                                 
                                 # Make direct request instead of using make_databricks_request
-                                response = await enqueue_request(url, headers, request_data)
+                                response = await request_handler.enqueue_request(url, headers, request_data)
                                 
                                 # Process the response
-                                response_data = await handle_databricks_response(response, start_time)
-                                assistant_message = MessageResponse(
+                                response_data = await request_handler.handle_databricks_response(response, start_time)
+                                assistant_message = message_handler.create_message(
                                     message_id=str(uuid.uuid4()),
                                     content=response_data["content"],
                                     role="assistant",
-                                    model=SERVING_ENDPOINT_NAME,
-                                    timestamp=datetime.now(),
+                                    session_id=message.session_id,
+                                    user_id=user_id,
+                                    user_info=user_info,
                                     sources=response_data.get("sources"),
                                     metrics=response_data.get("metrics")
                                 )
-                                chat_db.save_message_to_session(message.session_id, user_id, assistant_message)
-                                
-                                # Add assistant message to cache
-                                chat_history_cache.add_message(message.session_id, {
-                                    "role": "assistant",
-                                    "content": response_data["content"],
-                                    "message_id": assistant_message.message_id
-                                })
+
                                 yield f"data: {json.dumps(assistant_message.model_dump_json())}\n\n"
                                 yield "event: done\ndata: {}\n\n"
                                 
                             except httpx.ReadTimeout as timeout_error:
                                 logger.error(f"Fallback request failed with timeout: {str(timeout_error)}")
-                                error_message_id = str(uuid.uuid4())
-                                error_message = MessageResponse(
-                                    message_id=error_message_id,
-                                    content="Request timed out. Please try again later.",
-                                    role="assistant",
-                                    model=SERVING_ENDPOINT_NAME,
-                                    timestamp=datetime.now(),
-                                    sources=[],
-                                    metrics={"totalTime": time.time() - start_time}
+                                error_message = message_handler.create_error_message(
+                                    session_id=message.session_id,
+                                    user_id=user_id,
+                                    error_content="Request timed out. Please try again later."
                                 )
-                                chat_db.save_message_to_session(message.session_id, user_id, error_message)
-                                
-                                # Add error message to cache with the original message ID
-                                chat_history_cache.add_message(message.session_id, {
-                                    "role": "assistant",
-                                    "content": "Request timed out. Please try again later.",
-                                    "message_id": error_message_id
-                                })
 
                                 yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
                                 yield "event: done\ndata: {}\n\n"
@@ -689,32 +391,12 @@ async def chat(
         # Handle rate limit errors specifically
         if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
             error_message = "The service is currently experiencing high demand. Please wait a moment and try again."
-        start_time = time.time()
-        error_message_id = str(uuid.uuid4())
-        error_response = {
-            'message_id': error_message_id,
-            'content': error_message,
-            'sources': [],
-            'metrics': None,
-            'timestamp': datetime.now().isoformat()
-        }
         
-        error_message = MessageResponse(
-            message_id=error_message_id,
-            content=error_response["content"],
-            role="assistant",
-            model=SERVING_ENDPOINT_NAME,
-            timestamp=datetime.now(),
-            sources=error_response.get("sources"),
-            metrics=error_response.get("metrics")
+        error_message = message_handler.create_error_message(
+            session_id=message.session_id,
+            user_id=user_id,
+            error_content=error_message
         )
-        chat_history_cache.add_message(message.session_id, {
-            "role": "assistant",
-            "content": error_response["content"],
-            "message_id": error_message_id,
-            "created_at": datetime.now()
-        })
-        chat_db.save_message_to_session(message.session_id, user_id, error_message)
         
         async def error_generate():
             yield f"data: {json.dumps(error_message.model_dump_json())}\n\n"
@@ -768,20 +450,7 @@ async def regenerate_message(
 ):
     try:
         user_id = user_info["user_id"]
-        # Get chat history from cache
-        chat_history = copy.deepcopy(chat_history_cache.get_history(request.session_id))
-        
-        # If cache is empty, load from database
-        if not chat_history:
-            chat_data = chat_db.get_chat(request.session_id, user_id)
-            if chat_data and chat_data.messages:
-                chat_history = [
-                    {"role": msg.role, "content": msg.content, "message_id": msg.message_id}
-                    for msg in chat_data.messages[-20:]
-                ]
-                for msg in chat_history:
-                    chat_history_cache.add_message(request.session_id, msg)
-        # Find the message to regenerate in the history
+        chat_history = await load_chat_history(request.session_id, user_id, False)
         message_index = next(
             (i for i, msg in enumerate(chat_history) 
              if msg.get('message_id') == request.message_id), 
@@ -794,13 +463,11 @@ async def regenerate_message(
                 detail=f"Message {request.message_id} not found in chat session {request.session_id}."
             )
 
-        # Get the original message's timestamp
         original_message = chat_history[message_index]
         original_timestamp = original_message.get('timestamp')
         if not original_timestamp:
             original_timestamp = datetime.now().isoformat()
 
-        # Get history up to the message being regenerated
         history_up_to_message = chat_history[:message_index]
 
         async def generate():
@@ -816,6 +483,7 @@ async def regenerate_message(
                         request_data = {
                             "messages": [{"role": "user", "content": history_up_to_message[-1]["content"]}]
                         }
+                    print("request_data====>", request_data)
                     if supports_trace:
                         request_data["databricks_options"] = {"return_trace": True}
 
@@ -847,20 +515,18 @@ async def regenerate_message(
                                                     content = data['choices'][0].get('delta', {}).get('content', '')
                                                     # Extract sources if this is the final message containing databricks_output
                                                     if 'databricks_output' in data:
-                                                        sources = await extract_sources_from_trace(data)
+                                                        sources = await request_handler.extract_sources_from_trace(data)
                                                     
                                                     accumulated_content += content
                                                     current_time = time.time()
-                                                    response_data = {
-                                                        'message_id': request.message_id,
-                                                        'content': content,
-                                                        'sources': sources if sources else None,
-                                                        'metrics': {
-                                                            'timeToFirstToken': ttft,
-                                                            'totalTime': current_time - start_time
-                                                        },
-                                                        'timestamp': original_timestamp
-                                                    }
+                                                    response_data = create_response_data(
+                                                        request.message_id,
+                                                        content,
+                                                        sources,
+                                                        ttft,
+                                                        current_time - start_time,
+                                                        original_timestamp
+                                                    )
                                                     yield f"data: {json.dumps(response_data)}\n\n"
 
                                                 if "delta" in data:
@@ -868,42 +534,32 @@ async def regenerate_message(
                                                     if delta["role"] == "assistant" and delta.get("content"):
                                                         content = delta['content']
                                                         accumulated_content += content
-                                                        response_data = {
-                                                            'message_id': request.message_id,
-                                                            'content': content,
-                                                            'sources': sources if sources else None,
-                                                            'metrics': {
-                                                                'timeToFirstToken': ttft if first_token_time is not None else None,
-                                                                'totalTime': time.time() - start_time
-                                                            }
-                                                        }
+                                                        response_data = create_response_data(
+                                                            request.message_id,
+                                                            content,
+                                                            sources,
+                                                            ttft if first_token_time is not None else None,
+                                                            time.time() - start_time,
+                                                            original_timestamp
+                                                        )
                                                         yield f"data: {json.dumps(response_data)}\n\n"    
                                             except json.JSONDecodeError:
                                                 continue
 
                                     # Final update with complete message
-                                    total_time = time.time() - start_time
-                                    updated_message = MessageResponse(
+                                    updated_message = message_handler.update_message(
+                                        session_id=request.session_id,
                                         message_id=request.message_id,
+                                        user_id=user_id,
                                         content=accumulated_content,
-                                        role="assistant",
-                                        model=SERVING_ENDPOINT_NAME,
-                                        timestamp=original_timestamp,
                                         sources=sources,
+                                        timestamp=original_timestamp,
                                         metrics={
                                             "timeToFirstToken": ttft,
-                                            "totalTime": total_time
+                                            "totalTime": time.time() - start_time
                                         }
                                     )
-                                    # Update message in cache
-                                    chat_history_cache.update_message(
-                                        request.session_id,
-                                        request.message_id,
-                                        accumulated_content
-                                    )
                                     
-                                    # Update message in database
-                                    chat_db.update_message(request.session_id, user_id, updated_message)
                                     final_response = {
                                             'message_id': request.message_id,
                                             'sources': sources
@@ -911,60 +567,34 @@ async def regenerate_message(
                                     yield f"data: {json.dumps(final_response)}\n\n"
                                     yield "event: done\ndata: {}\n\n"
                     else:
-                        response = await enqueue_request(f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations", headers, request_data)
-                        response_data = await handle_databricks_response(response, start_time)
-                        total_time = time.time() - start_time
-                        updated_message = MessageResponse(
+                        response = await request_handler.enqueue_request(f"https://{os.getenv('DATABRICKS_HOST')}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations", headers, request_data)
+                        response_data = await request_handler.handle_databricks_response(response, start_time)
+                        updated_message = message_handler.update_message(
+                            session_id=request.session_id,
                             message_id=request.message_id,
+                            user_id=user_id,
                             content=response_data["content"],
-                            role="assistant",
-                            model=SERVING_ENDPOINT_NAME,
-                            timestamp=original_timestamp,
                             sources=response_data.get("sources", []),
+                            timestamp=original_timestamp,
                             metrics={
-                                "totalTime": total_time
+                                "totalTime": time.time() - start_time
                             }
                         )
-                        # Update message in cache
-                        chat_history_cache.update_message(
-                            request.session_id,
-                            request.message_id,
-                            response_data["content"]
-                        )
-                        # Update message in database
-                        chat_db.update_message(request.session_id, user_id, updated_message)
                         
-                        # Include original timestamp in response
-                        response_data["timestamp"] = original_timestamp
-                        response_data["message_id"] = request.message_id
                         yield f"data: {updated_message.model_dump_json()}\n\n"
                         yield "event: done\ndata: {}\n\n"
                     
             except Exception as e:
                 logger.error(f"Error in regeneration: {str(e)}")
-                total_time = time.time() - start_time
-                error_response = {
-                    "message_id": request.message_id,
-                    "content": "Failed to regenerate response. Please try again.",
-                    "sources": [],
-                    "metrics": None,
-                    "timestamp": original_timestamp
-                }
-                
-                error_message = MessageResponse(
+                error_message = message_handler.update_message(
+                    session_id=request.session_id,
                     message_id=request.message_id,
-                    content=error_response["content"],
-                    role="assistant",
-                    model=SERVING_ENDPOINT_NAME,
-                    timestamp=original_timestamp,
+                    user_id=user_id,
+                    content="Failed to regenerate response. Please try again.",
                     sources=[],
-                    metrics=None
-                )
-                # Update error message in cache
-                chat_history_cache.update_message(request.session_id, request.message_id, error_response["content"])
+                    timestamp=original_timestamp,
+                    metrics=None)
                 
-                # Update error message in database
-                chat_db.update_message(request.session_id, user_id, error_message)
                 
                 yield f"data: {error_message.model_dump_json()}\n\n"
                 yield "event: done\ndata: {}\n\n"
@@ -977,7 +607,6 @@ async def regenerate_message(
                 'Connection': 'keep-alive',
             }
         )
-
     except Exception as e:
         logger.error(f"Error in regenerate_message endpoint: {str(e)}")
         raise HTTPException(
@@ -990,65 +619,7 @@ async def regenerate_error(
     error: ErrorRequest,
     user_info: dict = Depends(get_user_info)
 ):
-    try:
-        user_id = user_info["user_id"]
-        # Get the chat session from database
-        chat_data = chat_db.get_chat(error.session_id, user_id)
-        if not chat_data:
-            logger.error(f"Session {error.session_id} not found in database")
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Chat session {error.session_id} not found. Please ensure you're using a valid session ID."
-            )
-        
-        # Check if this is a new error message or updating an existing one
-        is_new_error = not any(msg.message_id == error.message_id for msg in chat_data.messages)
-        
-        if is_new_error:
-            # Create new error message
-            error_message = MessageResponse(
-                message_id=str(uuid.uuid4()),  # Generate new ID for new error
-                content=error.content,
-                role=error.role,
-                model=SERVING_ENDPOINT_NAME,
-                timestamp=error.timestamp,
-                sources=error.sources,
-                metrics=error.metrics
-            )
-            # Save new error message to database
-            chat_db.save_message_to_session(error.session_id, user_id, error_message)
-            # Add to cache
-            chat_history_cache.add_message(error.session_id, {
-                "role": error.role,
-                "content": error.content,
-                "message_id": error_message.message_id,
-                "timestamp": error.timestamp
-            })
-            
-        else:
-            # Update existing message
-            error_message = MessageResponse(
-                message_id=error.message_id,  # Use existing message ID
-                content=error.content,
-                role=error.role,
-                model=SERVING_ENDPOINT_NAME,
-                timestamp=error.timestamp,
-                sources=error.sources,
-                metrics=error.metrics
-            )
-            # Update message in database
-            chat_db.update_message(error.session_id, user_id, error_message)
-            # Update in cache
-            chat_history_cache.update_message(error.session_id, error.message_id, error.content)
-        
-        return {"status": "error saved", "message_id": error_message.message_id}
-        
-    except Exception as e:
-        logger.error(f"Error in regenerate_error endpoint: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="An error occurred while saving the error message."
-        )
+    return await error_handler.handle_error_endpoint(error, user_info)
 
 # Add new endpoint for rating messages
 @api_app.post("/messages/{message_id}/rate")
@@ -1081,6 +652,77 @@ async def logout():
 @api_app.get("/login")
 async def login(user_info: dict = Depends(get_user_info)):
     return {"user_info": user_info}
+
+async def load_chat_history(session_id: str, user_id: str, is_first_message: bool) -> List[Dict]:
+    """
+    Load chat history with caching mechanism.
+    Returns chat history in cache format.
+    """
+    # Try to get from cache first
+    chat_history = copy.deepcopy(chat_history_cache.get_history(session_id))
+    if chat_history:
+        chat_history = convert_messages_to_cache_format(chat_history.messages)
+    # If cache is empty and not first message, load from database
+    elif not chat_history and not is_first_message:
+        chat_data = chat_db.get_chat(session_id, user_id)
+        if chat_data and chat_data.messages:
+            # Convert to cache format
+            chat_history = convert_messages_to_cache_format(chat_data.messages)
+            # Store in cache
+            for msg in chat_history:
+                chat_history_cache.add_message(session_id, msg)
+    
+    return chat_history or []
+
+def convert_messages_to_cache_format(messages: List) -> List[Dict]:
+    """
+    Convert database messages to cache format.
+    Returns last 20 messages in cache format.
+    """
+    if not messages:
+        return []
+    
+    return [
+        {
+            "role": msg.role,
+            "content": msg.content,
+            "message_id": msg.message_id,
+            "timestamp": msg.timestamp.isoformat() if isinstance(msg.timestamp, datetime) else msg.timestamp
+        } 
+        for msg in messages[-20:]
+    ]
+
+def create_response_data(
+    message_id: str,
+    content: str,
+    sources: Optional[List],
+    ttft: Optional[float],
+    total_time: float,
+    timestamp: Optional[str] = None
+) -> Dict:
+    """Create standardized response data for both streaming and non-streaming responses."""
+    # Convert content to string if it's a dictionary
+    if isinstance(content, dict):
+        content = content.get('content', '')
+    if isinstance(timestamp, datetime):
+        timestamp = timestamp.isoformat()
+    # Create response data
+    response_data = {
+        'message_id': message_id,
+        'content': content,
+        'sources': sources if sources else None,
+        'metrics': {
+            'timeToFirstToken': ttft,
+            'totalTime': total_time
+        }
+    }
+    
+    # Add timestamp if provided
+    if timestamp:
+        response_data['timestamp'] = timestamp
+        
+    # Convert any datetime objects in the response to strings
+    return response_data
 
 if __name__ == "__main__":
     import uvicorn

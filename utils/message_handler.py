@@ -12,50 +12,47 @@ class MessageHandler:
         self.chat_db = chat_db
         self.chat_history_cache = chat_history_cache
 
-    def create_message(self, content: str, role: str, session_id: str, user_id: str, 
-                      sources: Optional[list] = None, metrics: Optional[dict] = None) -> MessageResponse:
+    def create_message(self, message_id: str, content: str, role: str, session_id: str, user_id: str, 
+                      user_info: Optional[dict] = None, sources: Optional[list] = None, 
+                      metrics: Optional[dict] = None, is_first_message: bool = False) -> MessageResponse:
         """Create a new message and save it to both database and cache"""
-        message_id = str(uuid.uuid4())
-        timestamp = datetime.now()
         
         message = MessageResponse(
             message_id=message_id,
             content=content,
             role=role,
             model=SERVING_ENDPOINT_NAME,
-            timestamp=timestamp,
+            timestamp=datetime.now().isoformat(),
             sources=sources,
-            metrics=metrics
+            metrics=metrics,
+            created_at=datetime.now().isoformat()
         )
         
         # Save to database
-        self.chat_db.save_message_to_session(session_id, user_id, message)
+        self.chat_db.save_message_to_session(session_id, 
+                                             user_id, 
+                                             message, 
+                                             user_info=user_info,
+                                             is_first_message=is_first_message)
         
         # Add to cache
-        self.chat_history_cache.add_message(session_id, {
-            "role": role,
-            "content": content,
-            "message_id": message_id,
-            "created_at": timestamp,
-            "sources": sources,
-            "metrics": metrics,
-            "model": SERVING_ENDPOINT_NAME
-        })
+        self.chat_history_cache.add_message(session_id, message)
         
         return message
 
     def update_message(self, session_id: str, message_id: str, user_id: str, 
-                      new_content: str, sources: Optional[list] = None, 
+                      content: str, sources: Optional[list] = None, 
+                      timestamp: Optional[datetime] = None,
                       metrics: Optional[dict] = None) -> MessageResponse:
         """Update an existing message in both database and cache"""
-        timestamp = datetime.now()
-        
+        if timestamp is None:
+            timestamp = datetime.now()
         message = MessageResponse(
             message_id=message_id,
-            content=new_content,
+            content=content,
             role="assistant",
             model=SERVING_ENDPOINT_NAME,
-            timestamp=timestamp,
+            timestamp=timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp,
             sources=sources,
             metrics=metrics
         )
@@ -64,19 +61,14 @@ class MessageHandler:
         self.chat_db.update_message(session_id, user_id, message)
         
         # Update in cache with all fields
-        self.chat_history_cache.update_message(session_id, message_id, {
-            "content": new_content,
-            "sources": sources,
-            "metrics": metrics,
-            "timestamp": timestamp,
-            "model": SERVING_ENDPOINT_NAME
-        })
+        self.chat_history_cache.update_message(session_id, message_id, message)
         
         return message
 
     def create_error_message(self, session_id: str, user_id: str, error_content: str) -> MessageResponse:
         """Create an error message and save it"""
         return self.create_message(
+            message_id=str(uuid.uuid4()),
             content=error_content,
             role="assistant",
             session_id=session_id,
