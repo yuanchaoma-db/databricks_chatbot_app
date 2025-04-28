@@ -29,3 +29,4 @@ ERROR_MESSAGES = {
     "not_found": "{resource_id} not found. Please ensure you're using a valid session ID.",
     "general": "An error occurred while processing your request."
 } 
+URL = f"https://{DATABRICKS_HOST}/serving-endpoints/{SERVING_ENDPOINT_NAME}/invocations"

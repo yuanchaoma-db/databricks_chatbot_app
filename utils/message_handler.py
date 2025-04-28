@@ -27,17 +27,14 @@ class MessageHandler:
             metrics=metrics,
             created_at=datetime.now().isoformat()
         )
-        
         # Save to database
         self.chat_db.save_message_to_session(session_id, 
                                              user_id, 
                                              message, 
                                              user_info=user_info,
                                              is_first_message=is_first_message)
-        
         # Add to cache
         self.chat_history_cache.add_message(session_id, message)
-        
         return message
 
     def update_message(self, session_id: str, message_id: str, user_id: str, 

@@ -3,12 +3,13 @@ from collections import defaultdict
 import threading
 from datetime import datetime
 from models import MessageResponse, ChatHistoryItem
-
+from chat_database import ChatDatabase
 class ChatHistoryCache:
     """In-memory cache for chat history"""
-    def __init__(self):
+    def __init__(self, chat_db: ChatDatabase):
         self.cache: Dict[str, ChatHistoryItem] = {}
         self.lock = threading.Lock()
+        self.chat_db = chat_db
 
     def get_history(self, session_id: str) -> ChatHistoryItem:
         """Get chat history from cache"""
@@ -44,11 +45,15 @@ class ChatHistoryCache:
     def update_message(self, session_id: str, message_id: str, message: MessageResponse):
         """Update a message in the cache while preserving order"""
         with self.lock:
+            if session_id not in self.cache:
+                chat_data = self.chat_db.get_chat(session_id, message.user_id)
+                if chat_data:
+                    self.cache[session_id] = chat_data
+                else:
+                    raise ValueError("Session id {} not found in cache or DB during update_message.".format(session_id))
             messages = self.cache[session_id].messages
             for msg in messages:
                 if msg.message_id == message_id:
-                    # Preserve the original created_at and position
                     msg.content = message.content
-                    # Update timestamp but keep created_at
                     msg.timestamp = message.timestamp
                     break

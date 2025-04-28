@@ -97,6 +97,6 @@ class ErrorHandler:
             # Update message in database
             self.message_handler.chat_db.update_message(error.session_id, user_id, error_message)
             # Update in cache
-            self.message_handler.chat_history_cache.update_message(error.session_id, error.message_id, error.content)
+            self.message_handler.chat_history_cache.update_message(error.session_id, error.message_id, error_message)
         
         return {"status": "error saved", "message_id": error_message.message_id}

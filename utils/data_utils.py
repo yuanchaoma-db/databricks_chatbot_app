@@ -5,9 +5,9 @@ from chat_database import ChatDatabase
 from utils.chat_history_cache import ChatHistoryCache
 from utils.error_handler import ErrorHandler
 from fastapi import Request
+from datetime import timedelta
 from databricks.sdk import WorkspaceClient
-chat_db = ChatDatabase()
-chat_history_cache = ChatHistoryCache()
+from models import MessageResponse
 async def check_endpoint_capabilities(model: str, streaming_support_cache: dict) -> tuple[bool, bool]:
     """
     Check if endpoint supports streaming and trace data.
@@ -65,7 +65,7 @@ async def get_user_info(request: Request = None) -> dict:
             raise ErrorHandler.handle_error(status_code=401, detail="User not authenticated")
         return user_info
 
-async def load_chat_history(session_id: str, user_id: str, is_first_message: bool) -> List[Dict]:
+async def load_chat_history(session_id: str, user_id: str, is_first_message: bool, chat_history_cache: ChatHistoryCache, chat_db: ChatDatabase) -> List[Dict]:
     """
     Load chat history with caching mechanism.
     Returns chat history in cache format.
@@ -82,7 +82,14 @@ async def load_chat_history(session_id: str, user_id: str, is_first_message: boo
             chat_history = convert_messages_to_cache_format(chat_data.messages)
             # Store in cache
             for msg in chat_history:
-                chat_history_cache.add_message(session_id, msg)
+                message_response = MessageResponse(
+                    message_id=msg["message_id"],
+                    content=msg["content"],
+                    role=msg["role"],
+                    timestamp=msg["timestamp"],
+                    created_at=msg["created_at"]
+                )
+                chat_history_cache.add_message(session_id, message_response)
     
     return chat_history or []
 
@@ -93,17 +100,17 @@ def convert_messages_to_cache_format(messages: List) -> List[Dict]:
     """
     if not messages:
         return []
-    
-    return [
-        {
+    formatted_messages = []
+    for msg in messages[-20:]:
+        formatted_messages.append({
             "role": msg.role,
             "content": msg.content,
             "message_id": msg.message_id,
-            "timestamp": msg.timestamp.isoformat() if isinstance(msg.timestamp, datetime) else msg.timestamp
-        } 
-        for msg in messages[-20:]
-    ]
-
+            "timestamp": msg.timestamp.isoformat() if isinstance(msg.timestamp, datetime) else msg.timestamp,   
+            "created_at": msg.created_at.isoformat() if isinstance(msg.created_at, datetime) else msg.created_at
+        })
+    return formatted_messages
+    
 def create_response_data(
     message_id: str,
     content: str,

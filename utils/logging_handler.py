@@ -69,8 +69,7 @@ def with_logging(func):
             logger = StructuredLogger(__name__)
             logger.info(f"Starting {func.__name__}", 
                        function=func.__name__,
-                       args=str(args),
-                       kwargs=str(kwargs))
+                       args=str(args))
             
             result = await func(*args, **kwargs)
             
@@ -89,34 +88,3 @@ def with_logging(func):
     
     return wrapper
 
-# Create performance monitoring decorator
-def monitor_performance(func):
-    """Decorator to monitor function performance"""
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        start_time = datetime.utcnow()
-        logger = StructuredLogger(__name__)
-        
-        try:
-            result = await func(*args, **kwargs)
-            end_time = datetime.utcnow()
-            duration_ms = (end_time - start_time).total_seconds() * 1000
-            
-            logger.info(f"Performance metrics for {func.__name__}",
-                       function=func.__name__,
-                       duration_ms=duration_ms,
-                       success=True)
-            
-            return result
-        except Exception as e:
-            end_time = datetime.utcnow()
-            duration_ms = (end_time - start_time).total_seconds() * 1000
-            
-            logger.error(f"Performance metrics for {func.__name__} (failed)",
-                        error=e,
-                        function=func.__name__,
-                        duration_ms=duration_ms,
-                        success=False)
-            raise
-    
-    return wrapper 
