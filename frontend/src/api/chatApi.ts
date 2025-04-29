@@ -1,7 +1,7 @@
 import { Message, Chat } from '../types';
 
-//export const API_URL = '/chat-api';
-export const API_URL = 'http://localhost:8000/chat-api';
+export const API_URL = '/chat-api';
+//export const API_URL = 'http://localhost:8000/chat-api';
 
 
 export const sendMessage = async (
