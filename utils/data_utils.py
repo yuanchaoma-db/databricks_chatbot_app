@@ -51,16 +51,16 @@ async def get_user_info(request: Request = None) -> dict:
                 "username": "test_user1"
             }
         
-        # user_info = {
-        #     "email": request.headers.get("X-Forwarded-Email"),
-        #     "user_id": request.headers.get("X-Forwarded-User"),
-        #     "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
-        # }
         user_info = {
-            "email": "test@databricks.com",
-            "user_id": "test_user1",
-            "username": "test_user1"
+            "email": request.headers.get("X-Forwarded-Email"),
+            "user_id": request.headers.get("X-Forwarded-User"),
+            "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
         }
+        # user_info = {
+        #     "email": "test@databricks.com",
+        #     "user_id": "test_user1",
+        #     "username": "test_user1"
+        # }
         if not user_info["user_id"]:
             raise ErrorHandler.handle_error(status_code=401, detail="User not authenticated")
         return user_info
