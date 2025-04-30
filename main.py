@@ -46,10 +46,10 @@ async def lifespan(app: FastAPI):
     await app_state.shutdown(app)
 
 app = FastAPI(lifespan=lifespan)
-#ui_app = StaticFiles(directory="frontend/build", html=True)
+ui_app = StaticFiles(directory="frontend/build", html=True)
 api_app = FastAPI()
 app.mount("/chat-api", api_app)
-#app.mount("/", ui_app)
+app.mount("/", ui_app)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],

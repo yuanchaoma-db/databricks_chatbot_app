@@ -26,11 +26,27 @@ The application is built with:
 ```bash
 pip install -r requirements.txt
 ```
-3. Set up your environment variables:
+
+3. Building the Frontend
+
+[1]. Navigate to the frontend directory:
+
 ```bash
-cp .env.example .env
-# Edit .env with your Databricks credentials
+cd frontend
 ```
+
+[2]. Install dependencies:
+
+```bash
+npm install
+```
+
+[3]. Build the production version:
+
+```bash
+npm run build
+```
+
 4. Run the application:
 ```bash
 python main.py
