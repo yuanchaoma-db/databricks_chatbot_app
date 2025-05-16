@@ -19,7 +19,7 @@ class TokenMinter:
         self.host = host
         self.token = None
         self.expiry_time = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._refresh_token()
         
     def _refresh_token(self) -> None:
