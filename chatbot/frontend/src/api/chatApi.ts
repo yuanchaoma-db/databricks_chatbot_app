@@ -262,14 +262,14 @@ export const postRegenerateError = async (
   }
 };
 
-export const fetchUserInfo = async (): Promise<{ username: string; email: string }> => {
+export const fetchUserInfo = async (): Promise<{ username: string; email: string, displayName: string }> => {
   try {
-    const response = await fetch(`${API_URL}/login`);
+    const response = await fetch(`${API_URL}/user-info`);
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     const data = await response.json();
-    return data.user_info;
+    return data;
   } catch (error) {
     console.error('Error fetching user info:', error);
     throw error;

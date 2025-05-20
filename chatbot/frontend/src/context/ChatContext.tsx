@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Message, Chat } from '../types';
 import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel, rateMessage as apiRateMessage, logout as apiLogout } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
@@ -35,6 +35,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
   const [model, setModel] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const chatsLoadedRef = useRef(false);
 
   const clearError = () => setError(null);
 
@@ -42,7 +43,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     const fetchChats = async () => {
       try {
         const chatHistory = await getChatHistory();
-        console.log('Fetched chat history:', chatHistory);
         setChats(chatHistory.sessions || []);
         if (chatHistory.sessions?.length > 0) {
           setCurrentChat(chatHistory.sessions[0]);
@@ -66,6 +66,15 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     fetchChats();
     fetchModel();
   }, []);
+
+
+  // Open the sidebar if there are chats, but only once
+  useEffect(() => {
+    if(chats.length > 0 && chatsLoadedRef.current === false) {
+      chatsLoadedRef.current = true;
+      setIsSidebarOpen(true)
+    }
+  }, [chats]);
 
   const sendMessage = async (content: string, includeHistory: boolean = true) => {
     if (!content.trim()) return;
@@ -185,7 +194,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       try {
         const historyResponse = await fetch(`${API_URL}/chats`);
         const historyData = await historyResponse.json();
-        console.log('Fetched chat history:', historyData);
         if (historyData.sessions) {
           setChats(historyData.sessions);
         }
@@ -369,7 +377,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       try {
         const historyResponse = await fetch(`${API_URL}/chats`);
         const historyData = await historyResponse.json();
-        console.log('Fetched chat history:', historyData);
         setChats(historyData.sessions || []);
       } catch (error) {
         console.error('Error fetching chat history:', error);

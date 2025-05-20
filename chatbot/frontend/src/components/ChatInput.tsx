@@ -22,13 +22,14 @@ const InputContainer = styled.div<InputContainerProps>`
   flex-direction: column;
   justify-content: space-between;
   gap: 8px;
+  margin-top: 10px;
 `;
 
 const TextArea = styled.textarea`
   width: 100%;
   border: none;
   outline: none;
-  font-size: 13px;
+  font-size: 15px;
   padding: 6px 0;
   color: #11171C;
   white-space: pre-wrap;
@@ -170,8 +171,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const handleSubmit = async () => {
     if (inputValue.trim() && !loading) {
       setIsRegenerating(false);
-      await sendMessage(inputValue, includeHistory);
       setInputValue('');
+      await sendMessage(inputValue, includeHistory);
       if (textareaRef.current) {
         textareaRef.current.style.height = '50px';
       }

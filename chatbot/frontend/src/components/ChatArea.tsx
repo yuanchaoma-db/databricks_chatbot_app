@@ -37,7 +37,8 @@ const WelcomeContainer = styled.div<{ visible: boolean }>`
   align-items: center;
   justify-content: center;
   height: 100%;
-  max-width: 660px;
+  width: 50%;
+  min-width: 300px;
   margin: auto;
   padding: 24px 16px;
 `;
@@ -70,7 +71,7 @@ const SuggestionButton = styled.button`
   border: 1px solid #C0CDD8;
   border-radius: 8px;
   color: #11171C;
-  font-size: 13px;
+  font-size: 15px;
   cursor: pointer;
   box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.05);
   
@@ -170,7 +171,7 @@ const ChatArea: React.FC = () => {
             setIncludeHistory={setIncludeHistory}
             data-testid="chat-input" 
           />
-          <SuggestionButtons data-testid="suggestion-buttons">
+          {/* <SuggestionButtons data-testid="suggestion-buttons">
             <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Find tables to query")}>
               <SuggestionIcon />
               <span>Find tables to query</span>
@@ -187,7 +188,7 @@ const ChatArea: React.FC = () => {
               <SuggestionIcon />
               <span>What is Unity Catalog?</span>
             </SuggestionButton>
-          </SuggestionButtons>
+          </SuggestionButtons> */}
           <Disclaimer>Chatbot may make mistakes. Check important info.</Disclaimer>
         </WelcomeContainer>
         
