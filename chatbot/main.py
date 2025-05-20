@@ -14,7 +14,6 @@ import time
 import logging
 import asyncio
 from chat_database import ChatDatabase
-# from token_minter import TokenMinter
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from models import MessageRequest, MessageResponse, ChatHistoryItem, ChatHistoryResponse, CreateChatRequest, ErrorRequest, RegenerateRequest
@@ -62,8 +61,6 @@ app.add_middleware(
 async def get_auth_headers(
     token: str = Depends(get_token)
 ) -> dict:
-    # Try to get the token from the header, else from the environment variable
-    # token = x_forwarded_access_token or os.environ.get("LOCAL_API_TOKEN")
     if not token:
         raise HTTPException(status_code=401, detail="No access token provided in header or environment variable")
     return {"Authorization": f"Bearer {token}"}

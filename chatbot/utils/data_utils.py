@@ -52,11 +52,9 @@ def get_token(
 async def get_user_info(user_access_token: str = Depends(get_token)) -> dict:
     """Get user information from request headers"""
     try:
-        # user_access_token = os.environ.get("LOCAL_API_TOKEN")
         w = WorkspaceClient(token=user_access_token, auth_type="pat")
 
         current_user = w.current_user.me()
-        # For PAT authentication, we'll use a default user
         return {
             "email": current_user.user_name,
             "user_id": current_user.id,
