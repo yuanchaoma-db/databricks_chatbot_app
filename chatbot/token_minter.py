@@ -55,4 +55,3 @@ class TokenMinter:
             if not self.token or not self.expiry_time or datetime.now() + timedelta(minutes=5) >= self.expiry_time:
                 self._refresh_token()
             return self.token
-

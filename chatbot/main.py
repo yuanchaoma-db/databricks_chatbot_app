@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request, Query
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Response, Request, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, RedirectResponse
@@ -14,7 +14,7 @@ import time
 import logging
 import asyncio
 from chat_database import ChatDatabase
-from token_minter import TokenMinter
+# from token_minter import TokenMinter
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from models import MessageRequest, MessageResponse, ChatHistoryItem, ChatHistoryResponse, CreateChatRequest, ErrorRequest, RegenerateRequest
@@ -35,7 +35,6 @@ from utils.dependencies import (
 )
 from utils.data_classes import StreamingContext, RequestContext, HandlerContext
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
@@ -59,16 +58,15 @@ app.add_middleware(
 )
 
 
-# Initialize token minter
-token_minter = TokenMinter(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
-    host=DATABRICKS_HOST
-)
-
 # Dependency to get auth headers
-async def get_auth_headers() -> dict:
-    token = token_minter.get_token()
+async def get_auth_headers(
+    # x_forwarded_access_token: str = Header(None, alias="X-Forwarded-Access-Token")
+    token: str = Depends(get_token)
+) -> dict:
+    # Try to get the token from the header, else from the environment variable
+    # token = x_forwarded_access_token or os.environ.get("LOCAL_API_TOKEN")
+    if not token:
+        raise HTTPException(status_code=401, detail="No access token provided in header or environment variable")
     return {"Authorization": f"Bearer {token}"}
     
 
@@ -126,8 +124,10 @@ async def chat(
                 write=8.0,
                 pool=8.0
             )
-            supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME, streaming_support_cache)
-            
+            # TODO: pass in client
+            # supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME, streaming_support_cache)
+            supports_streaming = True
+            supports_trace = True
             request_data = {
                 "messages": [
                     *([{"role": msg["role"], "content": msg["content"]} for msg in chat_history[:-1]] 
@@ -389,10 +389,22 @@ async def rate_message(
 async def logout():
     return RedirectResponse(url=f"https://{os.getenv('DATABRICKS_HOST')}/login.html", status_code=303)
 
-@api_app.get("/login")
-async def login(user_info: dict = Depends(get_user_info)):
-    return {"user_info": user_info}
-
+@api_app.get("/user-info")
+async def login(
+    user_info: dict = Depends(get_user_info),
+):
+    """Login endpoint for PAT authentication"""
+    try:
+       return user_info
+    except Exception as e:
+        logger.error(f"Login failed with error: {str(e)}")
+        if hasattr(e, 'response'):
+            logger.error(f"Response status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Authentication failed: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
