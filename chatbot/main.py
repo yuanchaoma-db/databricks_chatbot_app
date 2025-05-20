@@ -60,7 +60,6 @@ app.add_middleware(
 
 # Dependency to get auth headers
 async def get_auth_headers(
-    # x_forwarded_access_token: str = Header(None, alias="X-Forwarded-Access-Token")
     token: str = Depends(get_token)
 ) -> dict:
     # Try to get the token from the header, else from the environment variable

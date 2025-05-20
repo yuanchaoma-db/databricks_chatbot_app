@@ -1,10 +1,11 @@
 from typing import Dict, List, Optional
 from datetime import datetime
 import copy
+import os
 from chat_database import ChatDatabase
 from utils.chat_history_cache import ChatHistoryCache
 from utils.error_handler import ErrorHandler
-from fastapi import Request
+from fastapi import Request, Header, Depends
 from datetime import timedelta
 from databricks.sdk import WorkspaceClient
 from models import MessageResponse
@@ -40,30 +41,31 @@ async def check_endpoint_capabilities(model: str, streaming_support_cache: dict)
     except Exception as e:
         # If error occurs, return default values
         return True, False
+
+
+def get_token(
+    x_forwarded_access_token: str = Header(None, alias="X-Forwarded-Access-Token")
+) -> dict:
+    # Try to get the token from the header, else from the environment variable
+    return x_forwarded_access_token or os.environ.get("LOCAL_API_TOKEN")
     
-async def get_user_info(request: Request = None) -> dict:
-        """Get user information from request headers"""
-        if not request:
-            # For testing purposes, return test user info
-            return {
-                "email": "test@databricks.com",
-                "user_id": "test_user1",
-                "username": "test_user1"
-            }
-        
-        user_info = {
-            "email": request.headers.get("X-Forwarded-Email"),
-            "user_id": request.headers.get("X-Forwarded-User"),
-            "username": request.headers.get("X-Forwarded-Preferred-Username", "").split("@")[0]
+async def get_user_info(user_access_token: str = Depends(get_token)) -> dict:
+    """Get user information from request headers"""
+    try:
+        # user_access_token = os.environ.get("LOCAL_API_TOKEN")
+        w = WorkspaceClient(token=user_access_token, auth_type="pat")
+
+        current_user = w.current_user.me()
+        # For PAT authentication, we'll use a default user
+        return {
+            "email": current_user.user_name,
+            "user_id": current_user.id,
+            "username": current_user.user_name,
+            "displayName": current_user.display_name
         }
-        # user_info = {
-        #     "email": "test@databricks.com",
-        #     "user_id": "test_user1",
-        #     "username": "test_user1"
-        # }
-        if not user_info["user_id"]:
-            raise ErrorHandler.handle_error(status_code=401, detail="User not authenticated")
-        return user_info
+    except Exception as e:
+        logger.error(f"Error getting user info: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 async def load_chat_history(session_id: str, user_id: str, is_first_message: bool, chat_history_cache: ChatHistoryCache, chat_db: ChatDatabase) -> List[Dict]:
     """
