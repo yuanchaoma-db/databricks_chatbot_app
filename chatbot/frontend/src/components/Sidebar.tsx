@@ -56,7 +56,7 @@ const SessionHeader = styled.div`
 const ChatItem = styled.div<{ active: boolean }>`
   padding: 6px 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 15px;
   color: ${props => props.active ? '#0E538B' : '#11171C'};
   background-color: ${props => props.active ? 'rgba(34, 114, 180, 0.08)' : 'transparent'};
   border-radius: 4px;
@@ -84,7 +84,7 @@ const ChatItemText = styled.span`
 `;
 
 const DateHeader = styled.div`
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: #5F7281;
   padding: 16px 12px 8px 12px;

@@ -21,7 +21,6 @@ const Avatar = styled.button`
   align-items: center;
   justify-content: center;
   font-size: 14px;
-  font-family: 'SF Pro Text';
 `;
 
 const MenuDropdown = styled.div<{ isOpen: boolean }>`
@@ -33,27 +32,29 @@ const MenuDropdown = styled.div<{ isOpen: boolean }>`
   width: 240px;
   background: #F6F7F9;
   box-shadow: 0px 4px 8px rgba(27, 49, 57, 0.04);
-  border-radius: 8px;
+  border-radius: 2px;
   border: 1px solid #D1D9E1;
   flex-direction: column;
   z-index: 100;
 `;
 
 const UserInfo = styled.div`
-  padding: 4px 8px 4px 8px;
+  padding: 10px;
   color: #5F7281;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 16px;
   border-bottom: 1px solid #D1D9E1;
+  margin: 4px 2px;
 `;
 
 const MenuItem = styled.button`
+  margin: 2px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 10px;
   text-align: left;
   background: none;
   border: none;
-  font-size: 13px;
+  font-size: 12px;
   color: #11171C;
   cursor: pointer;
   line-height: 20px;
@@ -71,11 +72,11 @@ const LogoContainer = styled.div`
 `;
 
 const LogoIcon = styled.img`
-  height: 16px;
+  height: 22px;
 `;
 
 const LogoText = styled.img`
-  height: 13px;
+  height: 22px;
   margin-left: 4px;
 `;
 
@@ -83,8 +84,7 @@ const UserMenu: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { logout } = useChat();
-  const [username, setUsername] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userInfo, setUserInfo] = useState<{username: string, email: string, displayName: string} | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -101,13 +101,11 @@ const UserMenu: React.FC = () => {
     const getUserInfo = async () => {
       try {
         const userInfo = await fetchUserInfo();
-        setUsername(userInfo.username);
-        setUserEmail(userInfo.email);
+        setUserInfo(userInfo);
       } catch (error) {
         console.error('Failed to fetch user info:', error);
       }
     };
-
     getUserInfo();
   }, []);
 
@@ -120,6 +118,9 @@ const UserMenu: React.FC = () => {
     setIsOpen(false);
   };
 
+  if(!userInfo) {
+    return null;
+  }
   return (
     <>
       <LogoContainer data-testid="logo-container">
@@ -127,11 +128,11 @@ const UserMenu: React.FC = () => {
         <LogoText src={databricksText} alt="Databricks" data-testid="logo-text"/>
       </LogoContainer>
       <UserMenuContainer ref={menuRef}>
-        <Avatar onClick={() => setIsOpen(!isOpen)}>{username ? username.charAt(0).toUpperCase() : 'U'}</Avatar>
+        <Avatar onClick={() => setIsOpen(!isOpen)}>{userInfo.username.charAt(0).toUpperCase()}</Avatar>
         <MenuDropdown isOpen={isOpen}>
           <UserInfo>
-            {username ? username : 'Loading...'}<br />
-            {userEmail ? userEmail : 'Loading...'}
+            {userInfo.displayName}<br />
+            <span style={{fontSize: '12px', color: '#5F7281', display: 'block', marginTop: '2px'}}>{userInfo.email}</span>
           </UserInfo>
           <MenuItem onClick={handleLogout}>Log out</MenuItem>
         </MenuDropdown>

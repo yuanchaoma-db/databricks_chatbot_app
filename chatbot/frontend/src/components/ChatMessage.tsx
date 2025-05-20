@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import copyIconUrl from '../assets/images/copy_icon.svg';
 import refreshIconUrl from '../assets/images/sync_icon.svg';
 import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
@@ -18,9 +18,9 @@ const MessageContainer = styled.div<{ isUser: boolean }>`
   width: 100%;
   align-items: ${props => props.isUser ? 'flex-end' : 'flex-start'};
   align-self: ${props => props.isUser ? 'flex-end' : 'flex-start'};
-  margin-top: ${props => props.isUser ? '8px' : '16px'};
+  // margin-top: ${props => props.isUser ? '8px' : '16px'};
   max-width: ${props => props.isUser ? '80%' : '100%'};
-  margin-bottom: 10px;
+  margin-bottom: ${props => props.isUser ? '10px' : '0px'};
 `;
 
 const UserMessageContent = styled.div`
@@ -28,7 +28,7 @@ const UserMessageContent = styled.div`
   color: #11171C;
   padding: 8px 16px;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -43,7 +43,7 @@ const BotMessageContent = styled.div`
   overflow-wrap: break-word;
   white-space: normal;
   text-align: left;
-  font-size: 13px;
+  font-size: 15px;
   margin: 2px 0;
 `;
 
@@ -64,7 +64,7 @@ const ModelIcon = styled.div`
 `;
 
 const ModelName = styled.span`
-  font-size: 13px;
+  font-size: 15px;
   color: #11171C;
   font-weight: 600;
 `;
@@ -231,7 +231,7 @@ const SourcesButton = styled.button`
   background: none;
   border: none;
   color: #11171C;
-  font-size: 13px;
+  font-size: 15px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -338,9 +338,9 @@ const PreviewText = styled.div`
 `;
 
 const ThinkingIndicator = styled.div`
-  font-size: 13px;
+  font-size: 15px;
   color: #5F7281;
-  margin-bottom: 8px;
+  margin-bottom: 10px 0px;
   align-self: flex-start;
   text-align: left;
   display: flex;
@@ -365,6 +365,53 @@ const Spinner = styled.div`
   }
 `;
 
+const ThinkContainer = styled.div`
+  margin: 8px -6px;
+  border: 1px solid #E0E0E0;
+  border-radius: 8px;
+  overflow: hidden;
+`;
+
+const ThinkHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  border-bottom: 1px solid #e3e8ee;
+  cursor: pointer;
+  user-select: none;
+  min-height: 40px;
+  &:hover {
+    background-color: #f6f9fc;
+  }
+`;
+
+const ThinkTitle = styled.span`
+  width: 100%;
+  justify-content: space-between;
+  color: #3b4252;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+`;
+
+const ThinkContent = styled.div<{ isExpanded: boolean }>`
+  padding: ${props => props.isExpanded ? '12px' : '0'};
+  max-height: ${props => props.isExpanded ? '1000px' : '0'};
+  overflow: hidden;
+  // transition: all 0.3s ease-in-out;
+  background-color: white;
+`;
+
+const ChevronIcon = styled(FontAwesomeIcon)<{ isExpanded: boolean }>`
+  color: #5F7281;
+  // transition: transform 0.3s ease;
+  // font-size: 18px;
+  margin-left: 8px;
+  transform: rotate(${props => props.isExpanded ? '180deg' : '0deg'});
+`;
+
 interface ChatMessageProps {
   message: Message;
   onRegenerate: (messageId: string) => Promise<void>;
@@ -377,7 +424,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  console.log(`Message Inside ChatMessage and message.message_id=====>: ${message.content.slice(0, 10)} ${message.message_id}`);
+  const [expandedThinks, setExpandedThinks] = useState<string[]>([]);
   const currentRating = messageRatings[message.message_id];
 
   const handleCopy = async () => {
@@ -396,6 +443,68 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
 
   const handleThumbsDown = () => {
     rateMessage(message.message_id, 'down');
+  };
+
+  const toggleThink = (thinkId: string) => {
+    setExpandedThinks(prev => {
+      const newSet = [...prev];
+      const index = newSet.indexOf(thinkId);
+      if (index >= 0) {
+        newSet.splice(index, 1);
+      } else {
+        newSet.push(thinkId);
+      }
+      return newSet;
+    });
+  };
+
+  const renderThinkContent = (message: Message) => {
+    // Robustly parse <think> sections, including unclosed tags
+    const thinkRegex = /<think>([\s\S]*?)(<\/think>|$)/g;
+    let lastIndex = 0;
+    let match;
+    let thinkIndex = 0;
+    const elements = [];
+    const content = message.content;
+
+    while ((match = thinkRegex.exec(content)) !== null) {
+      // Add any regular content before this <think>
+      if (match.index > lastIndex) {
+        elements.push(
+          <ReactMarkdown key={`text-${lastIndex}`}>{content.slice(lastIndex, match.index)}</ReactMarkdown>
+        );
+      }
+
+      const thinkId = 'think-' + thinkIndex;
+      const isExpanded = expandedThinks.includes(thinkId);
+      elements.push(
+        <ThinkContainer key={thinkId}>
+          <ThinkHeader onClick={() => toggleThink(thinkId)}>
+            <ThinkTitle>
+              {isExpanded ? 'Thoughts' : 'View thoughts'}
+              <ChevronIcon
+                icon={faChevronDown}
+                isExpanded={isExpanded}
+              />
+            </ThinkTitle>
+          </ThinkHeader>
+          <ThinkContent isExpanded={isExpanded}>
+            <ReactMarkdown>{match[1]}</ReactMarkdown>
+          </ThinkContent>
+        </ThinkContainer>
+      );
+      lastIndex = thinkRegex.lastIndex;
+      thinkIndex++;
+    }
+
+    // Add any remaining regular content after the last <think>
+    if (lastIndex < content.length) {
+      elements.push(
+        <ReactMarkdown key={`text-end`}>{content.slice(lastIndex)}</ReactMarkdown>
+      );
+    }
+
+    return elements;
   };
 
   const renderSources = () => {
@@ -456,7 +565,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
 
   if (message.isThinking) {
     return (
-      <MessageContainer isUser={false} data-testid="bot-message-container">
+      <MessageContainer isUser={false} data-testid="bot-message-container" style={{ marginBottom: '20px' }}>
         <ModelInfo data-testid="model-info">
           <ModelIcon data-testid="model-icon" />
           <ModelName data-testid="model-name">{message.model || 'Databricks LLM'}</ModelName>
@@ -478,11 +587,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
         <ModelName data-testid="model-name">
           {message.model || 'Databricks LLM'}
         </ModelName>
-        
       </ModelInfo>
       
       <BotMessageContent data-testid="bot-message-content">
-        <ReactMarkdown>{message.content}</ReactMarkdown>
+        {renderThinkContent(message)}
         {message.metrics && (
           <ModelMetrics>
             {message.metrics.timeToFirstToken && `${message.metrics.timeToFirstToken.toFixed(2)}s to first token + `}

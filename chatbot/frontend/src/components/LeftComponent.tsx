@@ -69,7 +69,7 @@ const NewChatButton = styled.button<NewChatButtonProps>`
   border-radius: 4px;
   background-color: transparent;
   color: #11171C;
-  font-size: 13px;
+  font-size: 15px;
   cursor: pointer;
   box-shadow: ${props => props.isSidebarOpen ? '0px 1px 0px rgba(0, 0, 0, 0.05)' : 'none'};
   height: 32px;
@@ -89,7 +89,7 @@ const NewChatIcon = styled.div`
 
 
 const LeftComponent: React.FC<LeftComponentProps> = () => {
-  const { isSidebarOpen, toggleSidebar, startNewSession } = useChat();
+  const { isSidebarOpen, toggleSidebar, startNewSession, chats } = useChat();
   // TODO: add a loading state
   const handleNewChat = () => {
     startNewSession();
@@ -98,7 +98,7 @@ const LeftComponent: React.FC<LeftComponentProps> = () => {
   return (
     <LeftContainer isOpen={isSidebarOpen} data-testid="left-component">
       <NavLeft data-testid="nav-left">
-        <MenuButton onClick={toggleSidebar} data-testid="menu-button" />
+        <MenuButton onClick={toggleSidebar} data-testid="menu-button" disabled={chats?.length === 0}/>
         {isSidebarOpen ? (
           <NewChatButton onClick={handleNewChat} data-testid="nav-new-chat-button" isSidebarOpen={isSidebarOpen}>
             <NewChatIcon />
