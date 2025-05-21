@@ -3,7 +3,7 @@ import styled from 'styled-components';
 import { useChat } from '../context/ChatContext';
 import databricksLogo from '../assets/images/databricks_icon.svg';
 import databricksText from '../assets/images/databricks_text.svg';
-import { fetchUserInfo } from '../api/chatApi';
+import { fetchUserInfo, getServingEndpoints, ServingEndpoint } from '../api/chatApi';
 
 const UserMenuContainer = styled.div`
   position: relative;
@@ -80,11 +80,36 @@ const LogoText = styled.img`
   margin-left: 4px;
 `;
 
+const ModelSelect = styled.select`
+  margin-left: 16px;
+  margin-right: auto;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px solid #D1D9E1;
+  border-radius: 2px;
+  background: white;
+  font-size: 15px;
+  color: #11171C;
+  cursor: pointer;
+  outline: none;
+
+  &:hover {
+    border-color: #434A93;
+  }
+
+  &:focus {
+    border-color: #434A93;
+    box-shadow: 0 0 0 2px rgba(67, 74, 147, 0.1);
+  }
+`;
+
 const UserMenu: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const { logout } = useChat();
+  const { logout, currentEndpoint, setCurrentEndpoint } = useChat();
   const [userInfo, setUserInfo] = useState<{username: string, email: string, displayName: string} | null>(null);
+  const [availableEndpoints, setAvailableEndpoints] = useState<ServingEndpoint[]>([]);
+  const [isLoadingEndpoints, setIsLoadingEndpoints] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -109,6 +134,25 @@ const UserMenu: React.FC = () => {
     getUserInfo();
   }, []);
 
+  useEffect(() => {
+    const fetchModels = async () => {
+      setIsLoadingEndpoints(true);
+      try {
+        const endpoints = await getServingEndpoints();
+        setAvailableEndpoints(endpoints);
+      } catch (error) {
+        console.error('Failed to fetch models:', error);
+      } finally {
+        setIsLoadingEndpoints(false);
+      }
+    };
+    fetchModels();
+  }, []);
+
+  const handleModelChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    setCurrentEndpoint(event.target.value);
+  };
+
   const handleLogout = () => {
     try {
       logout();
@@ -121,11 +165,30 @@ const UserMenu: React.FC = () => {
   if(!userInfo) {
     return null;
   }
+
   return (
     <>
       <LogoContainer data-testid="logo-container">
         <LogoIcon src={databricksLogo} alt="Databricks Logo" data-testid="logo-icon"/>
         <LogoText src={databricksText} alt="Databricks" data-testid="logo-text"/>
+        <ModelSelect 
+          value={currentEndpoint} 
+          onChange={handleModelChange}
+          data-testid="model-select"
+          disabled={isLoadingEndpoints}
+        >
+          {isLoadingEndpoints ? (
+            <option value={currentEndpoint} disabled>
+              {currentEndpoint || 'Loading endpoints...'}
+            </option>
+          ) : (
+            availableEndpoints.map((endpoint) => (
+              <option key={endpoint.name} value={endpoint.name}>
+                {endpoint.name}
+              </option>
+            ))
+          )}
+        </ModelSelect>
       </LogoContainer>
       <UserMenuContainer ref={menuRef}>
         <Avatar onClick={() => setIsOpen(!isOpen)}>{userInfo.username.charAt(0).toUpperCase()}</Avatar>

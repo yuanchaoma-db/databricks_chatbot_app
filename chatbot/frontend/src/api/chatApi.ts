@@ -8,6 +8,7 @@ export const sendMessage = async (
   content: string, 
   sessionId: string,
   includeHistory: boolean,
+  servingEndpointName: string,
   onChunk: (chunk: { 
     message_id: string,
     content?: string, 
@@ -17,10 +18,9 @@ export const sendMessage = async (
       totalTime?: number;
     },
     model?: string
-  }) => void
+  }) => void,
 ): Promise<void> => {
   try {
-    console.log("Sending message to backend");
     const response = await fetch(
       `${API_URL}/chat`, 
       {
@@ -32,7 +32,8 @@ export const sendMessage = async (
         body: JSON.stringify({ 
           content,
           session_id: sessionId,
-          include_history: includeHistory
+          include_history: includeHistory,
+          serving_endpoint_name: servingEndpointName
         })
       }
     );
@@ -101,60 +102,13 @@ export const getChatHistory = async (): Promise<{ sessions: Chat[] }> => {
     return { sessions: [] };
   }
 };
-export const getModel = async (): Promise<string> => {
-  try {
-    const response = await fetch(`${API_URL}/model`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    return data.model;
-  } catch (error) {
-    console.error('Error fetching model:', error);
-    return '';
-  }
-};
-
-export const postError = async (
-  sessionId: string,
-  errorMessage: Message,
-): Promise<{ status: string; message_id: string }> => {
-  try {
-    console.log("postError: ", errorMessage);
-    const response = await fetch(
-      `${API_URL}/error`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message_id: errorMessage.message_id,
-          content: errorMessage.content,
-          role: errorMessage.role,
-          timestamp: errorMessage.timestamp,
-          sources: errorMessage.sources,
-          metrics: errorMessage.metrics
-        })
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to post error to backend');
-    }
-
-    return await response.json();
-  } catch (error) {
-    throw error;
-  }
-};
 
 export const regenerateMessage = async (
   content: string,
   sessionId: string,
   messageId: string,
   includeHistory: boolean,
+  servingEndpointName: string,
   onChunk: (chunk: {
     content?: string,
     sources?: any[],
@@ -177,7 +131,8 @@ export const regenerateMessage = async (
           message_id: messageId,
           original_content: content,
           session_id: sessionId,
-          include_history: includeHistory
+          include_history: includeHistory,
+          serving_endpoint_name: servingEndpointName
         })
       }
     );
@@ -225,43 +180,6 @@ export const regenerateMessage = async (
   }
 };
 
-export const postRegenerateError = async (
-  sessionId: string,
-  messageId: string,
-  errorMessage: Message,
-): Promise<{ status: string; message_id: string }> => {
-  try {
-    const response = await fetch(
-      `${API_URL}/regenerate/error`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          session_id: sessionId,
-          message_id: messageId,
-          content: errorMessage.content,
-          role: errorMessage.role,
-          timestamp: errorMessage.timestamp,
-          sources: errorMessage.sources,
-          metrics: errorMessage.metrics
-        })
-      }
-    );
-
-    if (!response.ok) {
-      console.error('Failed to post regenerate error to backend');
-      throw new Error('Failed to post regenerate error to backend');
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Error posting regenerate error message:', error);
-    throw error;
-  }
-};
-
 export const fetchUserInfo = async (): Promise<{ username: string; email: string, displayName: string }> => {
   try {
     const response = await fetch(`${API_URL}/user-info`);
@@ -300,4 +218,23 @@ export const rateMessage = async (messageId: string, rating: 'up' | 'down' | nul
 
 export const logout = async () => {
   window.location.href = `${API_URL}/logout`;
+};
+
+export interface ServingEndpoint {
+  name: string;
+  state: string;
+}
+
+export const getServingEndpoints = async (): Promise<ServingEndpoint[]> => {
+  try {
+    const response = await fetch(`${API_URL}/knowledge-assistant-endpoint`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.endpoints;
+  } catch (error) {
+    console.error('Error fetching available models:', error);
+    return [];
+  }
 };

@@ -3,7 +3,6 @@ import styled from 'styled-components';
 import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import { useChat } from '../context/ChatContext';
-import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import ChatTopNav from './ChatTopNav';
 
 interface ChatContainerProps {
@@ -51,43 +50,6 @@ const WelcomeMessage = styled.h1`
   text-align: center;
 `;
 
-const SuggestionButtons = styled.div`
-  display: flex;
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 24px;
-  width: 100%;
-`;
-
-const SuggestionButton = styled.button`
-  display: flex;
-  align-items: center;
-  text-wrap-mode: nowrap;
-  text-overflow: ellipsis;
-  gap: 8px;
-  padding: 8px 8px;
-  background-color: #FFFFFF;
-  border: 1px solid #C0CDD8;
-  border-radius: 8px;
-  color: #11171C;
-  font-size: 15px;
-  cursor: pointer;
-  box-shadow: 0px 1px 0px rgba(0, 0, 0, 0.05);
-  
-  &:hover {
-    background-color:rgb(252, 240, 252);
-  }
-`;
-
-const SuggestionIcon = styled.div`
-  width: 16px;
-  height: 16px;
-  background-image: url(${buttonIconUrl});
-  background-size: contain;
-  background-repeat: no-repeat;
-`;
-
 const Disclaimer = styled.div`
   font-size: 12px;
   color: #767676;
@@ -126,7 +88,7 @@ const MessagesContainer = styled.div`
 `;
 
 const ChatArea: React.FC = () => {
-  const { messages, loading, isSidebarOpen, sendMessage, regenerateMessage } = useChat();
+  const { messages, loading, isSidebarOpen, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
   const [hasStartedChat, setHasStartedChat] = useState(false);
@@ -149,11 +111,6 @@ const ChatArea: React.FC = () => {
   
   const hasMessages = messages?.length > 0 || hasStartedChat;
   
-  const handleSuggestionClick = (suggestion: string) => {
-    setHasStartedChat(true);
-    sendMessage(suggestion, includeHistory);
-  };
-  
   const handleRegenerate = async (messageId: string) => {
     setIsRegenerating(true);
     await regenerateMessage(messageId, includeHistory);
@@ -171,24 +128,6 @@ const ChatArea: React.FC = () => {
             setIncludeHistory={setIncludeHistory}
             data-testid="chat-input" 
           />
-          {/* <SuggestionButtons data-testid="suggestion-buttons">
-            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Find tables to query")}>
-              <SuggestionIcon />
-              <span>Find tables to query</span>
-            </SuggestionButton>
-            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Debug my notebook")}>
-              <SuggestionIcon />
-              <span>Debug my notebook</span>
-            </SuggestionButton>
-            <SuggestionButton data-testid="suggestion-button" onClick={() => handleSuggestionClick("Fix my code")}>
-              <SuggestionIcon />
-              <span>Fix my code</span>
-            </SuggestionButton>
-            <SuggestionButton onClick={() => handleSuggestionClick("What is Unity Catalog?")}>
-              <SuggestionIcon />
-              <span>What is Unity Catalog?</span>
-            </SuggestionButton>
-          </SuggestionButtons> */}
           <Disclaimer>Chatbot may make mistakes. Check important info.</Disclaimer>
         </WelcomeContainer>
         

@@ -9,12 +9,24 @@ from fastapi import Request, Header, Depends
 from datetime import timedelta
 from databricks.sdk import WorkspaceClient
 from models import MessageResponse
-async def check_endpoint_capabilities(model: str, streaming_support_cache: dict) -> tuple[bool, bool]:
+
+
+def get_token(
+    x_forwarded_access_token: str = Header(None, alias="X-Forwarded-Access-Token")
+) -> dict:
+    # Try to get the token from the header, else from the environment variable
+    return x_forwarded_access_token or os.environ.get("LOCAL_API_TOKEN")
+
+async def check_endpoint_capabilities(
+    model: str,
+    streaming_support_cache: dict,
+    user_access_token: str = Depends(get_token)
+) -> tuple[bool, bool]:
     """
     Check if endpoint supports streaming and trace data.
     Returns (supports_streaming, supports_trace)
     """
-    client = WorkspaceClient()
+    client = WorkspaceClient(token=user_access_token, auth_type="pat")
     current_time = datetime.now()
     cache_entry = streaming_support_cache['endpoints'].get(model)
     
@@ -43,11 +55,6 @@ async def check_endpoint_capabilities(model: str, streaming_support_cache: dict)
         return True, False
 
 
-def get_token(
-    x_forwarded_access_token: str = Header(None, alias="X-Forwarded-Access-Token")
-) -> dict:
-    # Try to get the token from the header, else from the environment variable
-    return x_forwarded_access_token or os.environ.get("LOCAL_API_TOKEN")
     
 async def get_user_info(user_access_token: str = Depends(get_token)) -> dict:
     """Get user information from request headers"""

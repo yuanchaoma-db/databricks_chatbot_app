@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, RedirectResponse
 from typing import Dict, List, Optional
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.serving import EndpointStateReady
 import os
 from dotenv import load_dotenv
 import uuid
@@ -33,6 +34,15 @@ from utils.dependencies import (
     get_streaming_support_cache
 )
 from utils.data_classes import StreamingContext, RequestContext, HandlerContext
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # This will output to console
+    ]
+)
 
 logger = logging.getLogger(__name__)
 load_dotenv(override=True)
@@ -79,9 +89,44 @@ async def error(
 ):
     await error_handler.handle_error_endpoint(error, user_info)
 
-@api_app.get("/model")
-async def get_model():
-    return {"model": SERVING_ENDPOINT_NAME}
+
+@api_app.get("/knowledge-assistant-endpoint")
+async def get_models(
+    headers: dict = Depends(get_auth_headers),
+    user_access_token: str = Depends(get_token)
+):
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://{DATABRICKS_HOST}/api/2.0/serving-endpoints",
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch endpoints: {response.status_code} - {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to fetch serving endpoints: {response.text}"
+                )
+            
+            endpoints_data = response.json()
+            available_endpoints = [
+                {
+                    "name": endpoint["name"],
+                    "state": endpoint["state"]["ready"],
+                }
+                for endpoint in endpoints_data.get("endpoints", [])
+                if endpoint["state"]["ready"] == "READY" and endpoint.get("tile_endpoint_metadata") is not None and endpoint.get("tile_endpoint_metadata").get("problem_type") == "KNOWLEDGE_ASSISTANT"
+            ]
+            
+            return {"endpoints": available_endpoints}
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch serving endpoints: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch serving endpoints: {str(e)}"
+        )
 
 # Modify the chat endpoint to handle sessions
 @api_app.post("/chat")
@@ -120,10 +165,11 @@ async def chat(
                 write=8.0,
                 pool=8.0
             )
-            # TODO: pass in client
-            # supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME, streaming_support_cache)
-            supports_streaming = True
-            supports_trace = True
+            # Get the serving endpoint name from the request
+            serving_endpoint_name = message.serving_endpoint_name or SERVING_ENDPOINT_NAME
+            endpoint_url = f"https://{DATABRICKS_HOST}/serving-endpoints/{serving_endpoint_name}/invocations"
+            
+            supports_streaming, supports_trace = await check_endpoint_capabilities(serving_endpoint_name, streaming_support_cache)
             request_data = {
                 "messages": [
                     *([{"role": msg["role"], "content": msg["content"]} for msg in chat_history[:-1]] 
@@ -137,7 +183,7 @@ async def chat(
             if not supports_streaming:
                 logger.info("non Streaming is running")
                 async for response_chunk in streaming_handler.handle_non_streaming_response(
-                    request_handler, URL, headers, request_data, message.session_id, user_id, user_info, message_handler
+                    request_handler, endpoint_url, headers, request_data, message.session_id, user_id, user_info, message_handler
                 ):
                     yield response_chunk
             else:
@@ -153,7 +199,7 @@ async def chat(
                             start_time = time.time()
 
                             async with streaming_client.stream('POST', 
-                                URL,
+                                endpoint_url,
                                 headers=headers,
                                 json=request_data,
                                 timeout=streaming_timeout
@@ -172,15 +218,15 @@ async def chat(
                                     raise Exception("Streaming not supported")
                         except (httpx.ReadTimeout, httpx.HTTPError, Exception) as e:
                             logger.error(f"Streaming failed with error: {str(e)}, falling back to non-streaming")
-                            if SERVING_ENDPOINT_NAME in streaming_support_cache['endpoints']:
-                                streaming_support_cache['endpoints'][SERVING_ENDPOINT_NAME].update({
+                            if serving_endpoint_name in streaming_support_cache['endpoints']:
+                                streaming_support_cache['endpoints'][serving_endpoint_name].update({
                                     'supports_streaming': False,
                                     'last_checked': datetime.now()
                                 })
                             
                             request_data["stream"] = False
                             # Add a random query parameter to avoid any caching
-                            url = URL+"?nocache={uuid.uuid4()}"
+                            url = f"{endpoint_url}?nocache={uuid.uuid4()}"
                             logger.info(f"Making fallback request with fresh connection to {url}")
                             async for response_chunk in streaming_handler.handle_non_streaming_response(
                                 request_handler, url, headers, request_data, message.session_id, user_id, user_info, message_handler
@@ -226,33 +272,6 @@ async def get_chat_history(user_info: dict = Depends(get_user_info),chat_db: Cha
     user_id = user_info["user_id"]
     return chat_db.get_chat_history(user_id)
 
-@api_app.get("/chats/{session_id}", response_model=ChatHistoryItem)
-async def get_chat(session_id: str, user_info: dict = Depends(get_user_info),chat_db: ChatDatabase = Depends(get_chat_db)):
-    user_id = user_info["user_id"]
-    return chat_db.get_chat(session_id, user_id)
-
-@api_app.get("/sessions/{session_id}/messages")
-async def get_session_messages(
-    session_id: str,
-    user_info: dict = Depends(get_user_info),
-    chat_db: ChatDatabase = Depends(get_chat_db)
-):
-    try:
-        user_id = user_info["user_id"]
-        chat_data = chat_db.get_chat(session_id, user_id)
-        if not chat_data:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Chat session {session_id} not found. Please ensure you're using a valid session ID."
-            )
-        
-        return {"messages": chat_data.messages}
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail="An error occurred while retrieving session messages. " + str(e)
-        )
 
 @api_app.post("/regenerate")
 async def regenerate_message(
@@ -291,7 +310,8 @@ async def regenerate_message(
         async def generate():
             timeout = httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
-                supports_streaming, supports_trace = await check_endpoint_capabilities(SERVING_ENDPOINT_NAME, streaming_support_cache)
+                serving_endpoint_name = request.serving_endpoint_name or SERVING_ENDPOINT_NAME
+                supports_streaming, supports_trace = await check_endpoint_capabilities(serving_endpoint_name, streaming_support_cache)
                 request_data = {
                 "messages": [
                     *([{"role": msg["role"], "content": msg["content"]} for msg in history_up_to_message[:-1]] 
@@ -299,7 +319,6 @@ async def regenerate_message(
                     {"role": "user", "content": history_up_to_message[-1]["content"]}
                     ]
                 }
-                print("Regenerate request_data============", request_data)
                 if supports_trace:
                     request_data["databricks_options"] = {"return_trace": True}
 
@@ -344,18 +363,12 @@ async def regenerate_message(
             }
         )
     except Exception as e:
+        logger.error(f"Error regenerating message: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail="An error occurred while regenerating the message. " + str(e)
         )
 
-@api_app.post("/regenerate/error")
-async def regenerate_error(
-    error: ErrorRequest,
-    user_info: dict = Depends(get_user_info),
-    error_handler: ErrorHandler = Depends(get_error_handler)
-):
-    return await error_handler.handle_error_endpoint(error, user_info)
 
 # Add new endpoint for rating messages
 @api_app.post("/messages/{message_id}/rate")
