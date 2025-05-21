@@ -164,7 +164,7 @@ const ChatArea: React.FC = () => {
       <ChatTopNav />
       <ChatContent data-testid="chat-content">
         <WelcomeContainer visible={!hasMessages} data-testid="welcome-container">
-          <WelcomeMessage data-testid="welcome-message">What can I help with?</WelcomeMessage>
+          <WelcomeMessage data-testid="welcome-message">What can I help with v3?</WelcomeMessage>
           <ChatInput 
             setIsRegenerating={setIsRegenerating} 
             includeHistory={includeHistory}
@@ -189,7 +189,7 @@ const ChatArea: React.FC = () => {
               <span>What is Unity Catalog?</span>
             </SuggestionButton>
           </SuggestionButtons> */}
-          <Disclaimer>Chatbot may make mistakes V2. Check important info.</Disclaimer>
+          <Disclaimer>Chatbot may make mistakes V3. Check important info.</Disclaimer>
         </WelcomeContainer>
         
         {hasMessages && (
@@ -214,7 +214,7 @@ const ChatArea: React.FC = () => {
           includeHistory={includeHistory}
           setIncludeHistory={setIncludeHistory}
         />
-        <DisclaimerFixed>Chatbot may make mistakes. Check important info.</DisclaimerFixed>
+        <DisclaimerFixed>Chatbot may make mistakes v3. Check important info.</DisclaimerFixed>
       </FixedInputWrapper>
     </ChatContainer>
   );
