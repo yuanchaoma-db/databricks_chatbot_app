@@ -54,7 +54,14 @@ async def lifespan(app: FastAPI):
     await app_state.shutdown(app)
 
 app = FastAPI(lifespan=lifespan)
-ui_app = StaticFiles(directory="frontend/build", html=True)
+
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+ui_app = CachedStaticFiles(directory="frontend/build", html=True)
 api_app = FastAPI()
 app.mount("/chat-api", api_app)
 app.mount("/", ui_app)

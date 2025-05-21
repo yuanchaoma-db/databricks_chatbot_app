@@ -98,7 +98,7 @@ const ModelDropdown = styled.div<{ isOpen: boolean }>`
   border: 1px solid #D1D9E1;
   z-index: 200;
   padding: 4px 0;
-  max-height: 240px;
+  max-height: 300px;
   overflow-y: auto;
 `;
 
