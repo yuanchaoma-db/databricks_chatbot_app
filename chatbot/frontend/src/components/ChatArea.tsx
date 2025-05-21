@@ -189,7 +189,7 @@ const ChatArea: React.FC = () => {
               <span>What is Unity Catalog?</span>
             </SuggestionButton>
           </SuggestionButtons> */}
-          <Disclaimer>Chatbot may make mistakes. Check important info.</Disclaimer>
+          <Disclaimer>Chatbot may make mistakes V2. Check important info.</Disclaimer>
         </WelcomeContainer>
         
         {hasMessages && (
