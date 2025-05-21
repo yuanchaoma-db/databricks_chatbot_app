@@ -406,8 +406,6 @@ const ThinkContent = styled.div<{ isExpanded: boolean }>`
 
 const ChevronIcon = styled(FontAwesomeIcon)<{ isExpanded: boolean }>`
   color: #5F7281;
-  // transition: transform 0.3s ease;
-  // font-size: 18px;
   margin-left: 8px;
   transform: rotate(${props => props.isExpanded ? '180deg' : '0deg'});
 `;
