@@ -83,22 +83,30 @@ class RequestHandler:
             logger.error(f"Request failed: {str(e)}")
             raise  # Re-raise the exception to trigger backoff
 
+    # TODO: this is wrong, do we need this??
     async def extract_sources_from_trace(self, data: dict) -> list:
-        """Extract sources from the Databricks API trace data."""
+        """Extract sources from the Databricks API trace data format."""
         sources = []
-        if data is not None and "databricks_output" in data and "trace" in data["databricks_output"]:
-            trace = data["databricks_output"]["trace"]
-            if trace and "data" in trace and "spans" in trace["data"]:
-                for span in trace["data"]["spans"]:
-                    if span.get("name") == "VectorStoreRetriever":
-                        retriever_output = json.loads(span["attributes"].get("mlflow.spanOutputs", "[]"))
-                        sources = [
-                            {
-                                "page_content": doc["page_content"],
-                                "metadata": doc["metadata"]
-                            } 
-                            for doc in retriever_output
-                        ]
+        try:
+            if data and "databricks_output" in data and "trace" in data["databricks_output"]:
+                trace = data["databricks_output"]["trace"]
+                logger.info(f"trace: {trace}")
+                if trace and "data" in trace and "spans" in trace["data"]:
+                    for span in trace["data"]["spans"]:
+                        if span.get("name") == "RETRIEVER":
+                            outputs = span.get("attributes", {}).get("mlflow.spanOutputs")
+                            if outputs:
+                                try:
+                                    docs = json.loads(outputs)
+                                    for doc in docs:
+                                        sources.append({
+                                            "page_content": doc.get("page_content"),
+                                            "metadata": doc.get("metadata")
+                                        })
+                                except Exception as e:
+                                    logger.error(f"Failed to parse spanOutputs: {e}")
+        except Exception as e:
+            logger.error(f"Error extracting sources from trace: {e}")
         return sources
 
     async def handle_databricks_response(

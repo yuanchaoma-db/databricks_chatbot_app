@@ -99,8 +99,7 @@ async def error(
 
 @api_app.get("/knowledge-assistant-endpoint")
 async def get_models(
-    headers: dict = Depends(get_auth_headers),
-    user_access_token: str = Depends(get_token)
+    headers: dict = Depends(get_auth_headers)
 ):
     try:
         async with httpx.AsyncClient() as client:
@@ -177,6 +176,7 @@ async def chat(
             endpoint_url = f"https://{DATABRICKS_HOST}/serving-endpoints/{serving_endpoint_name}/invocations"
             
             supports_streaming, supports_trace = await check_endpoint_capabilities(serving_endpoint_name, streaming_support_cache)
+            logger.info(f"ednpoint {serving_endpoint_name} supports_streaming: {supports_streaming}, supports_trace: {supports_trace}")
             request_data = {
                 "messages": [
                     *([{"role": msg["role"], "content": msg["content"]} for msg in chat_history[:-1]] 
@@ -184,11 +184,10 @@ async def chat(
                     {"role": "user", "content": message.content}
                 ]
             }
-            if supports_trace:
-                request_data["databricks_options"] = {"return_trace": True}
+            # if supports_trace:
+            request_data["databricks_options"] = {"return_trace": True}
 
             if not supports_streaming:
-                logger.info("non Streaming is running")
                 async for response_chunk in streaming_handler.handle_non_streaming_response(
                     request_handler, endpoint_url, headers, request_data, message.session_id, user_id, user_info, message_handler
                 ):
@@ -197,7 +196,6 @@ async def chat(
                 async with streaming_semaphore:
                     async with httpx.AsyncClient(timeout=streaming_timeout) as streaming_client:
                         try:
-                            logger.info("streaming is running")
                             request_data["stream"] = True
                             assistant_message_id = str(uuid.uuid4())
                             first_token_time = None

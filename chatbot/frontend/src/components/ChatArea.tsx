@@ -88,7 +88,7 @@ const MessagesContainer = styled.div`
 `;
 
 const ChatArea: React.FC = () => {
-  const { messages, loading, isSidebarOpen, regenerateMessage } = useChat();
+  const { messages, isSidebarOpen, regenerateMessage } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);  
   const [hasStartedChat, setHasStartedChat] = useState(false);
@@ -105,7 +105,7 @@ const ChatArea: React.FC = () => {
   
   useEffect(() => {
     if (messagesEndRef.current && !isRegenerating) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [messages, isRegenerating]);
   

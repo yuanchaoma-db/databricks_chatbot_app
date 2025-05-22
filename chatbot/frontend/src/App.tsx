@@ -18,6 +18,7 @@ const AppContainer = styled.div<AppContainerProps>`
   flex-direction: column;
   height: 100vh;
   width: 100%;
+  overflow: hidden;
 `;
 
 const MainContent = styled.div<MainContentProps>`
