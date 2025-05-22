@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, API_URL, postError, regenerateMessage as apiRegenerateMessage, postRegenerateError, getModel, rateMessage as apiRateMessage, logout as apiLogout } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, regenerateMessage as apiRegenerateMessage, rateMessage as apiRateMessage, logout as apiLogout } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -8,7 +8,7 @@ interface ChatContextType {
   chats: Chat[];
   messages: Message[];
   loading: boolean;
-  model: string;
+  // model: string;
   sendMessage: (content: string, includeHistory: boolean) => Promise<void>;
   selectChat: (chatId: string) => void;
   isSidebarOpen: boolean;
@@ -21,19 +21,25 @@ interface ChatContextType {
   logout: () => void;
   error: string | null;
   clearError: () => void;
+  currentEndpoint: string;
+  setCurrentEndpoint: (endpointName: string) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [currentChat, setCurrentChat] = useState<Chat | null>(null);
+  const [currentEndpoint, setCurrentEndpoint] = useState<string>(() => {
+    // Initialize from localStorage if available
+    const savedEndpoint = localStorage.getItem('selectedEndpoint');
+    return savedEndpoint || '';
+  });
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
   const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
-  const [model, setModel] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const chatsLoadedRef = useRef(false);
 
@@ -44,27 +50,16 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       try {
         const chatHistory = await getChatHistory();
         setChats(chatHistory.sessions || []);
-        if (chatHistory.sessions?.length > 0) {
-          setCurrentChat(chatHistory.sessions[0]);
-        }
+        // if (chatHistory.sessions?.length > 0) {
+        //   setCurrentChat(chatHistory.sessions[0]);
+        // }
       } catch (error) {
         console.error('Failed to fetch chat history:', error);
         setError('Failed to load chat history. Please try again.');
       }
     };
 
-    const fetchModel = async () => {
-      try {
-        const model = await getModel();
-        setModel(model);
-      } catch (error) {
-        console.error('Failed to fetch model:', error);
-        setError('Failed to load model information.');
-      }
-    };
-
     fetchChats();
-    fetchModel();
   }, []);
 
 
@@ -113,7 +108,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         throw new Error('No active session ID');
       }
       
-      await apiSendMessage(content, currentSessionId, includeHistory, (chunk) => {
+      await apiSendMessage(content, currentSessionId, includeHistory, currentEndpoint, (chunk) => {
         if (chunk.content) {
           accumulatedContent = chunk.content;
         }
@@ -135,7 +130,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                 sources: chunk.sources,
                 metrics: chunk.metrics,
                 isThinking: false,
-                model: model
+                model: currentEndpoint
               }
             : msg
         ));
@@ -147,7 +142,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         role: 'assistant',
         timestamp: new Date(),
         isThinking: false,
-        model: model,
+        model: currentEndpoint,
         sources: messageSources,
         metrics: messageMetrics
       };
@@ -168,7 +163,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         role: 'assistant',
         timestamp: new Date(),
         isThinking: false,
-        model: model
+        model: currentEndpoint
       };
       
       // Keep the user message but update the thinking message to show error
@@ -177,19 +172,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           ? errorMessage
           : msg
       ));
-      
-      // Sync error message with backend
-      if (currentSessionId) {
-        const response = await postError(currentSessionId, errorMessage);
-        if (response.message_id) {
-          // Update the message with the new message_id from backend
-          setMessages(prev => prev.map(msg => 
-            msg.message_id === errorMessageId 
-              ? { ...msg, message_id: response.message_id }
-              : msg
-          ));
-        }
-      }
     } finally {
       try {
         const historyResponse = await fetch(`${API_URL}/chats`);
@@ -273,7 +255,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       role: 'assistant',
       timestamp: new Date(),
       isThinking: true,
-      model: model
+      model: currentEndpoint
     };
     
     setMessages(prev => {
@@ -295,6 +277,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         currentSessionId,
         messageId,
         includeHistory,
+        currentEndpoint,
         (chunk) => {
           if (chunk.content) {
             accumulatedContent = chunk.content;
@@ -308,7 +291,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
                 sources: chunk.sources || messageSources,
                 metrics: chunk.metrics || messageMetrics,
                 isThinking: false,
-                model: model
+                model: currentEndpoint
               };
               return updatedMessages;
             });
@@ -328,7 +311,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         role: 'assistant',
         timestamp: new Date(),
         isThinking: false,
-        model: model,
+        model: currentEndpoint,
         sources: messageSources,
         metrics: messageMetrics
       };
@@ -348,7 +331,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
           : 'Sorry, I encountered an error while regenerating the message. Please try again.', 
         role: 'assistant',
         timestamp: new Date(),
-        model: model,
+        model: currentEndpoint,
         isThinking: false,
         metrics: null
       };
@@ -362,17 +345,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         return updatedMessages;
       });
       console.log('error message:', errorMessage);
-      if (currentSessionId) {
-        const response = await postRegenerateError(currentSessionId, messageId, errorMessage);
-        if (response.message_id && response.message_id !== messageId) {
-          // Update the message with the new message_id from backend if it changed
-          setMessages(prev => prev.map(msg => 
-            msg.message_id === messageId 
-              ? { ...msg, message_id: response.message_id }
-              : msg
-          ));
-        }
-      }
     } finally {
       try {
         const historyResponse = await fetch(`${API_URL}/chats`);
@@ -425,13 +397,18 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     apiLogout();
   };
 
+  const handleSetCurrentEndpoint = (endpointName: string) => {
+    setCurrentEndpoint(endpointName);
+    localStorage.setItem('selectedEndpoint', endpointName);
+  };
+
   return (
     <ChatContext.Provider value={{
       currentChat,
       chats,
       messages,
       loading,
-      model,
+      // model,
       sendMessage,
       selectChat,
       isSidebarOpen,
@@ -443,7 +420,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       messageRatings,
       logout,
       error,
-      clearError
+      clearError,
+      currentEndpoint,
+      setCurrentEndpoint: handleSetCurrentEndpoint
     }}>
       {children}
     </ChatContext.Provider>

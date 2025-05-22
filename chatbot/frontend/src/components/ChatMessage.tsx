@@ -12,6 +12,8 @@ import downIconUrl from '../assets/images/down_icon.svg';
 import { Message } from '../types';
 import { useChat } from '../context/ChatContext';
 import sourceIconUrl from '../assets/images/source_icon.svg';
+import remarkGfm from 'remark-gfm';
+
 const MessageContainer = styled.div<{ isUser: boolean }>`
   display: flex;
   flex-direction: column;
@@ -406,8 +408,6 @@ const ThinkContent = styled.div<{ isExpanded: boolean }>`
 
 const ChevronIcon = styled(FontAwesomeIcon)<{ isExpanded: boolean }>`
   color: #5F7281;
-  // transition: transform 0.3s ease;
-  // font-size: 18px;
   margin-left: 8px;
   transform: rotate(${props => props.isExpanded ? '180deg' : '0deg'});
 `;
@@ -471,7 +471,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       // Add any regular content before this <think>
       if (match.index > lastIndex) {
         elements.push(
-          <ReactMarkdown key={`text-${lastIndex}`}>{content.slice(lastIndex, match.index)}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.slice(lastIndex, match.index)}</ReactMarkdown>
         );
       }
 
@@ -489,7 +489,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
             </ThinkTitle>
           </ThinkHeader>
           <ThinkContent isExpanded={isExpanded}>
-            <ReactMarkdown>{match[1]}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{match[1]}</ReactMarkdown>
           </ThinkContent>
         </ThinkContainer>
       );
@@ -497,10 +497,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       thinkIndex++;
     }
 
+    let processedContent = content;
+    const footnoteDefRegex = /^\[\^([^\]]+)\]:/m;
+    const footNoteMatch = processedContent.match(footnoteDefRegex);
+    if (footNoteMatch) {
+      const insertPos = footNoteMatch.index;
+      processedContent = processedContent.slice(0, insertPos) + '\n\n---\n\n' + processedContent.slice(insertPos);
+    }
+
+
     // Add any remaining regular content after the last <think>
-    if (lastIndex < content.length) {
+    if (lastIndex < processedContent.length) {
       elements.push(
-        <ReactMarkdown key={`text-end`}>{content.slice(lastIndex)}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{processedContent.slice(lastIndex)}</ReactMarkdown>
       );
     }
 
@@ -557,7 +566,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
     return (
       <MessageContainer isUser={true} data-testid="user-message-container">
         <UserMessageContent data-testid="user-message-content">
-          {message.content}
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {message.content}
+          </ReactMarkdown>
         </UserMessageContent>
       </MessageContainer>
     );

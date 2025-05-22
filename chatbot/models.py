@@ -6,6 +6,7 @@ class MessageRequest(BaseModel):
     content: str
     session_id: str
     include_history: bool = True
+    serving_endpoint_name: Optional[str] = None
 
 class MessageResponse(BaseModel):
     message_id: str
@@ -46,3 +47,4 @@ class RegenerateRequest(BaseModel):
     original_content: str
     session_id: str 
     include_history: bool = True
+    serving_endpoint_name: Optional[str] = None
