@@ -33,6 +33,9 @@ const UserMessageContent = styled.div`
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: normal;
+  > p {
+    margin: 0px;
+  }
 `;
 
 const BotMessageContent = styled.div`
