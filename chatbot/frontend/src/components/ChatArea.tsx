@@ -50,13 +50,6 @@ const WelcomeMessage = styled.h1`
   text-align: center;
 `;
 
-const Disclaimer = styled.div`
-  font-size: 12px;
-  color: #767676;
-  text-align: center;
-  margin-top: 24px;
-`;
-
 const FixedInputWrapper = styled.div<{ visible: boolean }>`
   display: ${props => props.visible ? 'flex' : 'none'};
   flex-direction: column;
@@ -69,14 +62,6 @@ const FixedInputWrapper = styled.div<{ visible: boolean }>`
   background-color: white;
   z-index: 10;
   box-shadow: 0 -10px 20px rgba(255, 255, 255, 0.9);
-`;
-
-const DisclaimerFixed = styled.div`
-  font-size: 12px;
-  color: #767676;
-  text-align: center;
-  margin-top: 8px;
-  width: 100%;
 `;
 
 const MessagesContainer = styled.div`
@@ -128,11 +113,10 @@ const ChatArea: React.FC = () => {
             setIncludeHistory={setIncludeHistory}
             data-testid="chat-input" 
           />
-          <Disclaimer>Chatbot may make mistakes. Check important info.</Disclaimer>
         </WelcomeContainer>
         
         {hasMessages && (
-          <MessagesContainer data-testid="messages-container">
+          <MessagesContainer data-testid="messages-container" id="messages-container">
             {messages.map((message, index) => (
               <ChatMessage    
                 key={index} 
@@ -153,7 +137,6 @@ const ChatArea: React.FC = () => {
           includeHistory={includeHistory}
           setIncludeHistory={setIncludeHistory}
         />
-        <DisclaimerFixed>Chatbot may make mistakes. Check important info.</DisclaimerFixed>
       </FixedInputWrapper>
     </ChatContainer>
   );

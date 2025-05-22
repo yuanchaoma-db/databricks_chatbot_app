@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { Message, Chat } from '../types';
-import { sendMessage as apiSendMessage, getChatHistory, API_URL, regenerateMessage as apiRegenerateMessage, rateMessage as apiRateMessage, logout as apiLogout } from '../api/chatApi';
+import { sendMessage as apiSendMessage, getChatHistory, API_URL, regenerateMessage as apiRegenerateMessage, logout as apiLogout } from '../api/chatApi';
 import { v4 as uuid } from 'uuid';
 
 interface ChatContextType {
@@ -8,7 +8,6 @@ interface ChatContextType {
   chats: Chat[];
   messages: Message[];
   loading: boolean;
-  // model: string;
   sendMessage: (content: string, includeHistory: boolean) => Promise<void>;
   selectChat: (chatId: string) => void;
   isSidebarOpen: boolean;
@@ -16,8 +15,6 @@ interface ChatContextType {
   startNewSession: () => void;
   copyMessage: (content: string) => void;
   regenerateMessage: (messageId: string, includeHistory: boolean) => Promise<void>;
-  rateMessage: (messageId: string, rating: 'up' | 'down') => void;
-  messageRatings: {[messageId: string]: 'up' | 'down'};
   logout: () => void;
   error: string | null;
   clearError: () => void;
@@ -39,7 +36,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(uuid());
-  const [messageRatings, setMessageRatings] = useState<{[messageId: string]: 'up' | 'down'}>({});
   const [error, setError] = useState<string | null>(null);
   const chatsLoadedRef = useRef(false);
 
@@ -50,9 +46,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       try {
         const chatHistory = await getChatHistory();
         setChats(chatHistory.sessions || []);
-        // if (chatHistory.sessions?.length > 0) {
-        //   setCurrentChat(chatHistory.sessions[0]);
-        // }
       } catch (error) {
         console.error('Failed to fetch chat history:', error);
         setError('Failed to load chat history. Please try again.');
@@ -358,40 +351,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const rateMessage = async (messageId: string, rating: 'up' | 'down') => {
-    try {
-      // If clicking the same rating again, remove it
-      const newRating = messageRatings[messageId] === rating ? null : rating;
-      
-      // Update UI state immediately
-      setMessageRatings(prev => {
-        if (newRating === null) {
-          const { [messageId]: _, ...rest } = prev;
-          return rest;
-        }
-        return { ...prev, [messageId]: newRating };
-      });
-
-      // Send to backend
-      await apiRateMessage(messageId, newRating);
-    } catch (error) {
-      console.error('Failed to rate message:', error);
-      // Revert UI state on error
-      setMessageRatings(prev => {
-        const { [messageId]: _, ...rest } = prev;
-        return rest;
-      });
-      setError('Failed to rate message. Please try again.');
-    }
-  };
-
   const logout = () => {
     // Clear local state
     setCurrentChat(null);
     setChats([]);
     setMessages([]);
     setCurrentSessionId(null);
-    setMessageRatings({});
     
     // Call the logout API endpoint which will handle the redirect
     apiLogout();
@@ -408,7 +373,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       chats,
       messages,
       loading,
-      // model,
       sendMessage,
       selectChat,
       isSidebarOpen,
@@ -416,8 +380,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       startNewSession,
       copyMessage,
       regenerateMessage,
-      rateMessage,
-      messageRatings,
       logout,
       error,
       clearError,

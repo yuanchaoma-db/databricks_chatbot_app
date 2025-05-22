@@ -35,7 +35,7 @@ const NavLeft = styled.div`
   display: flex;
   align-items: center;
   height: 48px;
-  padding: 0 16px 0 20px;
+  padding: 10 16px 0 20px;
   gap: 16px;
   justify-content: space-between;
 `;
@@ -64,6 +64,7 @@ const NewChatButton = styled.button<NewChatButtonProps>`
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-right: 10px;
   padding: 6px 12px;
   border: ${props => props.isSidebarOpen ? '1px solid #C0CDD8' : 'none'};
   border-radius: 4px;

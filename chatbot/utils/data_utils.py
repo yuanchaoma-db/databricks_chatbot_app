@@ -4,7 +4,6 @@ import copy
 import os
 from chat_database import ChatDatabase
 from utils.chat_history_cache import ChatHistoryCache
-from utils.error_handler import ErrorHandler
 from fastapi import Request, Header, Depends
 from datetime import timedelta
 from databricks.sdk import WorkspaceClient

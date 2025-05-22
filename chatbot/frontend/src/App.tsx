@@ -24,7 +24,8 @@ const AppContainer = styled.div<AppContainerProps>`
 const MainContent = styled.div<MainContentProps>`
   display: flex;
   height: 100vh;
-  position: relative;
+  width: 100%;
+  position: fixed;
 `;
 
 const App: React.FC = () => {
