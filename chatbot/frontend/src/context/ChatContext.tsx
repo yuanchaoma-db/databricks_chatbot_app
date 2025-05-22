@@ -50,9 +50,6 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       try {
         const chatHistory = await getChatHistory();
         setChats(chatHistory.sessions || []);
-        // if (chatHistory.sessions?.length > 0) {
-        //   setCurrentChat(chatHistory.sessions[0]);
-        // }
       } catch (error) {
         console.error('Failed to fetch chat history:', error);
         setError('Failed to load chat history. Please try again.');
