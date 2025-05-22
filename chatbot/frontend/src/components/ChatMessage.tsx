@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import styled from 'styled-components';
 import ReactMarkdown from 'react-markdown';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -404,6 +404,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [expandedThinks, setExpandedThinks] = useState<string[]>([]);
+  const chatContentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = async () => {
     await copyMessage(message.content);
@@ -467,6 +468,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       thinkIndex++;
     }
 
+    // insert a divider between content and footnotes
     let processedContent = content;
     const footnoteDefRegex = /^\[\^([^\]]+)\]:/m;
     const footNoteMatch = processedContent.match(footnoteDefRegex);
@@ -475,11 +477,41 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       processedContent = processedContent.slice(0, insertPos) + '\n\n---\n\n' + processedContent.slice(insertPos);
     }
 
-
-    // Add any remaining regular content after the last <think>
     if (lastIndex < processedContent.length) {
       elements.push(
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{processedContent.slice(lastIndex)}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a: ({node, ...props}) => {
+              const container = document.querySelector('#messages-container');
+              // scroll for footnote links + open in new tab for full urls
+              const href = props.href || '';
+              const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+                if (href.startsWith('#')) {
+                  e.preventDefault();
+                  const target = container?.querySelector(href);
+                  console.log('target', target);
+                  if (target) {
+                    // Only scroll if not already in view
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }
+              };
+              return (
+                <a
+                  {...props}
+                  onClick={handleClick}
+                  target={'_blank'}
+                  rel={'noopener noreferrer'}
+                >
+                  {props.children}
+                </a>
+              );
+            }
+          }}
+        >
+          {processedContent.slice(lastIndex)}
+        </ReactMarkdown>
       );
     }
 
@@ -549,9 +581,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       <MessageContainer isUser={false} data-testid="bot-message-container" style={{ marginBottom: '20px' }}>
         <ModelInfo data-testid="model-info">
           <ModelIcon data-testid="model-icon" />
-          <ModelName data-testid="model-name">{message.model || 'Databricks LLM'}</ModelName>
+          <ModelName data-testid="model-name">{'Knowledge Assistant'}</ModelName>
         </ModelInfo>
-        <BotMessageContent>
+        <BotMessageContent ref={chatContentRef}>
           <ThinkingIndicator>
             <Spinner />
             Thinking...

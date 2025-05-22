@@ -116,7 +116,7 @@ const ChatArea: React.FC = () => {
         </WelcomeContainer>
         
         {hasMessages && (
-          <MessagesContainer data-testid="messages-container">
+          <MessagesContainer data-testid="messages-container" id="messages-container">
             {messages.map((message, index) => (
               <ChatMessage    
                 key={index} 

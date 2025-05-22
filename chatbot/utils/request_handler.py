@@ -9,8 +9,6 @@ from typing import Dict, Optional, Tuple, List, Any
 from datetime import datetime
 from .config import (
     DATABRICKS_HOST,
-    API_TIMEOUT,
-    STREAMING_TIMEOUT,
     MAX_CONCURRENT_STREAMS,
     MAX_QUEUE_SIZE
 )

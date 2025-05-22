@@ -18,7 +18,7 @@ from chat_database import ChatDatabase
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from models import MessageRequest, MessageResponse, ChatHistoryItem, ChatHistoryResponse, CreateChatRequest, RegenerateRequest
-from utils.config import URL, SERVING_ENDPOINT_NAME, DATABRICKS_HOST, CLIENT_ID, CLIENT_SECRET
+from utils.config import URL, SERVING_ENDPOINT_NAME, DATABRICKS_HOST
 from utils import *
 from utils.logging_handler import with_logging
 from utils.app_state import app_state
