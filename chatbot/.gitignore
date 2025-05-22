@@ -8,7 +8,7 @@ frontend/.pnp.js
 
 # testing
 frontend/coverage
-
+.databricks/sync-snapshots/*
 # misc
 frontend/.DS_Store
 frontend/.env.local
@@ -20,3 +20,7 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 .DS_Store
+
+chatbot/__pycache__/
+chatbot/utils/__pycache__/
+chatbot/chat_history.db
