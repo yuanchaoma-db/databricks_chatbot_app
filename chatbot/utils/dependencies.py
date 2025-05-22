@@ -10,9 +10,6 @@ def get_chat_history_cache():
 def get_message_handler():
     return app_state.message_handler
 
-def get_error_handler():
-    return app_state.error_handler
-
 def get_streaming_handler():
     return app_state.streaming_handler
 

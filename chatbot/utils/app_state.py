@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from chat_database import ChatDatabase
 from .chat_history_cache import ChatHistoryCache
 from .message_handler import MessageHandler
-from .error_handler import ErrorHandler
 from .streaming_handler import StreamingHandler
 from .request_handler import RequestHandler
 from .config import SERVING_ENDPOINT_NAME
@@ -15,7 +14,6 @@ class AppState:
         self.chat_db: Optional[ChatDatabase] = None
         self.chat_history_cache: Optional[ChatHistoryCache] = None
         self.message_handler: Optional[MessageHandler] = None
-        self.error_handler: Optional[ErrorHandler] = None
         self.streaming_handler: Optional[StreamingHandler] = None
         self.request_handler: Optional[RequestHandler] = None
         self.streaming_semaphore: Optional[asyncio.Semaphore] = None
@@ -30,7 +28,6 @@ class AppState:
         self.chat_db = ChatDatabase()
         self.chat_history_cache = ChatHistoryCache(self.chat_db)
         self.message_handler = MessageHandler(self.chat_db, self.chat_history_cache)
-        self.error_handler = ErrorHandler(self.message_handler)
         self.streaming_handler = StreamingHandler()
         self.request_handler = RequestHandler(SERVING_ENDPOINT_NAME)
         self.streaming_semaphore = self.request_handler.streaming_semaphore

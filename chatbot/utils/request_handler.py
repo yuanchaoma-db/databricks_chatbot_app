@@ -14,7 +14,6 @@ from .config import (
     MAX_CONCURRENT_STREAMS,
     MAX_QUEUE_SIZE
 )
-from .error_handler import ErrorHandler
 from fastapi import HTTPException, Request
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,6 @@ class RequestHandler:
         try:
             if data and "databricks_output" in data and "trace" in data["databricks_output"]:
                 trace = data["databricks_output"]["trace"]
-                logger.info(f"trace: {trace}")
                 if trace and "data" in trace and "spans" in trace["data"]:
                     for span in trace["data"]["spans"]:
                         if span.get("name") == "RETRIEVER":

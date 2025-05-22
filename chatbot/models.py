@@ -33,15 +33,6 @@ class ChatHistoryResponse(BaseModel):
 class CreateChatRequest(BaseModel):
     title: str
 
-class ErrorRequest(BaseModel):
-    message_id: str
-    content: str
-    role: str = "assistant"
-    timestamp: datetime = Field(default_factory=datetime.now)
-    sources: Optional[List[dict]] = None
-    metrics: Optional[dict] = None
-    session_id: str
-
 class RegenerateRequest(BaseModel):
     message_id: str
     original_content: str

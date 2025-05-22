@@ -5,8 +5,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faChevronDown } from '@fortawesome/free-solid-svg-icons';
 import copyIconUrl from '../assets/images/copy_icon.svg';
 import refreshIconUrl from '../assets/images/sync_icon.svg';
-import thumbsUpIconUrl from '../assets/images/thumbs_up_icon.svg';
-import thumbsDownIconUrl from '../assets/images/thumbs_down_icon.svg';
 import buttonIconUrl from '../assets/images/buttonIcon.svg';
 import downIconUrl from '../assets/images/down_icon.svg';
 import { Message } from '../types';
@@ -136,28 +134,6 @@ const RefreshButton = styled(ActionButton)`
     background-color: rgba(34, 114, 180, 0.08);
     color: #0E538B;
   }
-`;
-
-const ThumbsUpButton = styled(ActionButton)<{ active: boolean }>`
-  background-image: url(${thumbsUpIconUrl});
-  background-size: 16px;
-  background-repeat: no-repeat;
-  background-position: center;
-  ${props => props.active && `
-    background-color: rgba(34, 114, 180, 0.08);
-  `}
-
-`;
-
-const ThumbsDownButton = styled(ActionButton)<{ active: boolean }>`
-  background-image: url(${thumbsDownIconUrl});
-  background-size: 16px;
-  background-repeat: no-repeat;
-  background-position: center;
-  ${props => props.active && `
-    background-color: rgba(34, 114, 180, 0.08);
-  `}
-  
 `;
 
 const SourcesSection = styled.div`
@@ -419,13 +395,12 @@ interface ChatMessageProps {
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
-  const { copyMessage, regenerateMessage, rateMessage, messageRatings } = useChat();
+  const { copyMessage } = useChat();
   const isUser = message.role === 'user';
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [expandedThinks, setExpandedThinks] = useState<string[]>([]);
-  const currentRating = messageRatings[message.message_id];
 
   const handleCopy = async () => {
     await copyMessage(message.content);
@@ -435,14 +410,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
 
   const handleRegenerate = async () => {
     await onRegenerate(message.message_id);
-  };
-
-  const handleThumbsUp = () => {
-    rateMessage(message.message_id, 'up');
-  };
-
-  const handleThumbsDown = () => {
-    rateMessage(message.message_id, 'down');
   };
 
   const toggleThink = (thinkId: string) => {
@@ -596,7 +563,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       <ModelInfo data-testid="model-info">
         <ModelIcon data-testid="model-icon" />
         <ModelName data-testid="model-name">
-          {message.model || 'Databricks LLM'}
+          {'Knowledge Assistant'}
         </ModelName>
       </ModelInfo>
       
@@ -625,18 +592,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
               onClick={handleRegenerate} 
               title="Regenerate" 
               data-testid={`refresh-button-${message.message_id}`}
-            />
-            <ThumbsUpButton 
-              onClick={handleThumbsUp} 
-              title="Thumbs Up" 
-              active={currentRating === 'up'}
-              data-testid={`thumbs-up-button-${message.message_id}`}
-            />
-            <ThumbsDownButton 
-              onClick={handleThumbsDown} 
-              title="Thumbs Down" 
-              active={currentRating === 'down'}
-              data-testid={`thumbs-down-button-${message.message_id}`}
             />
           </MessageActions>
         </MessageFooter>

@@ -1,7 +1,6 @@
-import { Message, Chat } from '../types';
+import { Chat } from '../types';
 
 export const API_URL = '/chat-api';
-//export const API_URL = 'http://localhost:8000/chat-api';
 
 
 export const sendMessage = async (
@@ -195,27 +194,6 @@ export const fetchUserInfo = async (): Promise<{ username: string; email: string
 };
 
 
-export const rateMessage = async (messageId: string, rating: 'up' | 'down' | null): Promise<void> => {
-  try {
-    const response = await fetch(
-      `${API_URL}/messages/${messageId}/rate?rating=${rating}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-  } catch (error) {
-    console.error('Error rating message:', error);
-    throw error;
-  }
-};
-
 export const logout = async () => {
   window.location.href = `${API_URL}/logout`;
 };
@@ -224,17 +202,3 @@ export interface ServingEndpoint {
   name: string;
   state: string;
 }
-
-export const getServingEndpoints = async (): Promise<ServingEndpoint[]> => {
-  try {
-    const response = await fetch(`${API_URL}/knowledge-assistant-endpoint`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    return data.endpoints;
-  } catch (error) {
-    console.error('Error fetching available models:', error);
-    return [];
-  }
-};
