@@ -39,6 +39,7 @@ const WelcomeContainer = styled.div<{ visible: boolean }>`
   width: 50%;
   min-width: 300px;
   margin: auto;
+  margin-bottom: 150px;
   padding: 24px 16px;
 `;
 
