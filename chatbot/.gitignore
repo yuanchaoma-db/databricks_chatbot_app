@@ -8,7 +8,6 @@ frontend/.pnp.js
 
 # testing
 frontend/coverage
-
 # misc
 frontend/.DS_Store
 frontend/.env.local
@@ -20,3 +19,7 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 .DS_Store
+
+__pycache__
+utils/__pycache__
+chat_history.db
