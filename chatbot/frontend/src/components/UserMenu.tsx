@@ -67,6 +67,7 @@ const MenuItem = styled.button`
 const LogoContainer = styled.div`
   padding-left: 8px;
   height: 32px;
+  min-heigh:32px;
   margin-top: 4px;
 `;
 
