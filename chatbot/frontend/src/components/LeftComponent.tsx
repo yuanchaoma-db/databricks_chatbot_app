@@ -90,7 +90,7 @@ const NewChatIcon = styled.div`
 
 
 const LeftComponent: React.FC<LeftComponentProps> = () => {
-  const { isSidebarOpen, toggleSidebar, startNewSession, chats } = useChat();
+  const { isSidebarOpen, toggleSidebar, startNewSession } = useChat();
   // TODO: add a loading state
   const handleNewChat = () => {
     startNewSession();
@@ -99,7 +99,7 @@ const LeftComponent: React.FC<LeftComponentProps> = () => {
   return (
     <LeftContainer isOpen={isSidebarOpen} data-testid="left-component">
       <NavLeft data-testid="nav-left">
-        <MenuButton onClick={toggleSidebar} data-testid="menu-button" disabled={chats?.length === 0}/>
+        <MenuButton onClick={toggleSidebar} data-testid="menu-button"/>
         {isSidebarOpen ? (
           <NewChatButton onClick={handleNewChat} data-testid="nav-new-chat-button" isSidebarOpen={isSidebarOpen}>
             <NewChatIcon />

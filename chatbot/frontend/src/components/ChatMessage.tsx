@@ -504,7 +504,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
                   target={'_blank'}
                   rel={'noopener noreferrer'}
                 >
-                  {props.children}
+                  {isNaN(Number(props.children)) ? props.children : `[${props.children}]`}
                 </a>
               );
             }
