@@ -411,7 +411,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   const [showSources, setShowSources] = useState(false);
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  const [expandedThinks, setExpandedThinks] = useState<string[]>([]);
+  const [closedThinks, setClosedThinks] = useState<string[]>([]);
   const chatContentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = async () => {
@@ -425,7 +425,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
   };
 
   const toggleThink = (thinkId: string) => {
-    setExpandedThinks(prev => {
+    setClosedThinks(prev => {
       const newSet = [...prev];
       const index = newSet.indexOf(thinkId);
       if (index >= 0) {
@@ -455,7 +455,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onRegenerate }) => {
       }
 
       const thinkId = 'think-' + thinkIndex;
-      const isExpanded = expandedThinks.includes(thinkId);
+      const isExpanded = !closedThinks.includes(thinkId);
       elements.push(
         <ThinkContainer key={thinkId}>
           <ThinkHeader onClick={() => toggleThink(thinkId)}>
