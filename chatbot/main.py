@@ -60,13 +60,12 @@ class CachedStaticFiles(StaticFiles):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
-ui_app = CachedStaticFiles(directory="frontend/build", html=True)
+ui_app = CachedStaticFiles(directory="frontend/build-chat-app", html=True)
 api_app = FastAPI()
 app.mount("/chat-api", api_app)
 app.mount("/", ui_app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

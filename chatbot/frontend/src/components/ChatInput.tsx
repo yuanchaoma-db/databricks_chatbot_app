@@ -11,7 +11,6 @@ const InputContainer = styled.div<InputContainerProps>`
   width: 100%;
   max-width: 680px;
   min-height: 50px;
-  // height: 90px;
   position: relative;
   border: 1px solid #C0CDD8;
   border-radius: 12px;
@@ -41,7 +40,6 @@ const TextArea = styled.textarea`
   display: block;
   background-color: transparent;
   font-family: inherit;
-  // margin-bottom: 30px;
   resize: none;
   box-sizing: border-box;
 `;

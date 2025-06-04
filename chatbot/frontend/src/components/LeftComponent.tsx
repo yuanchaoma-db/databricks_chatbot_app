@@ -91,7 +91,6 @@ const NewChatIcon = styled.div`
 
 const LeftComponent: React.FC<LeftComponentProps> = () => {
   const { isSidebarOpen, toggleSidebar, startNewSession } = useChat();
-  // TODO: add a loading state
   const handleNewChat = () => {
     startNewSession();
   };
